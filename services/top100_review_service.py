@@ -24,6 +24,8 @@ CACHE_DIR_CANDIDATES = (
     BASE_DIR / "temp_stock_top10_stage" / "cache",
 )
 
+_tushare_patched = False
+
 
 @dataclass(frozen=True)
 class ReviewCandidate:
@@ -34,6 +36,7 @@ class ReviewCandidate:
 
 
 def _make_tushare_pro():
+    global _tushare_patched
     import requests as _requests
     import tushare as ts
 
@@ -47,13 +50,16 @@ def _make_tushare_pro():
     pro._DataApi__token = token
     pro._DataApi__http_url = url
 
-    orig_post = _requests.post
+    if not _tushare_patched:
+        orig_post = _requests.post
 
-    def _patched_post(*args, **kwargs):
-        kwargs.setdefault("timeout", 15)
-        return orig_post(*args, **kwargs)
+        def _patched_post(*args, **kwargs):
+            kwargs.setdefault("timeout", 15)
+            return orig_post(*args, **kwargs)
 
-    _requests.post = _patched_post
+        _requests.post = _patched_post
+        _tushare_patched = True
+
     return pro
 
 

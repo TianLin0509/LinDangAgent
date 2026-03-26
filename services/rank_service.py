@@ -8,10 +8,10 @@ from pathlib import Path
 import re
 
 
-NAME_KEYS = ("股票名称", "stock_name", "name", "閼诧紕銈ㄩ崥宥囆?")
-CODE_KEYS = ("代码", "ts_code", "stock_code", "symbol", "娴狅絿鐖?")
-SCORE_KEYS = ("综合匹配度", "综合评分", "match_score", "score", "缂佺厧鎮庨崠褰掑帳鎼?")
-REPORT_KEYS = ("报告链接", "report_url", "url", "閹躲儱鎲￠柧鐐复")
+NAME_KEYS = ("股票名称", "stock_name", "name")
+CODE_KEYS = ("代码", "ts_code", "stock_code", "symbol")
+SCORE_KEYS = ("综合匹配度", "综合评分", "match_score", "score")
+REPORT_KEYS = ("报告链接", "report_url", "url")
 
 
 def get_top10_repo_dir(base_dir: Path) -> Path:

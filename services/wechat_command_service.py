@@ -47,7 +47,6 @@ TOP10_GENERATE_COMMANDS = {
 }
 KLINE_PREDICT_PREFIXES = (
     "k线预测",
-    "K线预测",
     "预测k线",
 )
 
@@ -79,6 +78,11 @@ def normalize_text_command(content: str) -> str:
     return re.sub(r"\s+", "", (content or "").strip().lower())
 
 
+def _matches_cmd(content: str, cmd_set: set) -> bool:
+    normalized = normalize_text_command(content).replace("-", "")
+    return normalized in {item.lower().replace(" ", "").replace("-", "") for item in cmd_set}
+
+
 def is_balance_query(content: str) -> bool:
     raw = (content or "").strip()
     normalized = normalize_text_command(raw)
@@ -88,28 +92,23 @@ def is_balance_query(content: str) -> bool:
 
 
 def is_top10_generate_command(content: str) -> bool:
-    normalized = normalize_text_command(content).replace("-", "")
-    return normalized in {item.replace("-", "") for item in TOP10_GENERATE_COMMANDS}
+    return _matches_cmd(content, TOP10_GENERATE_COMMANDS)
 
 
 def is_top10_query(content: str) -> bool:
-    normalized = normalize_text_command(content).replace("-", "")
-    return normalized in {item.replace("-", "") for item in TOP10_QUERY_COMMANDS} and not is_top10_generate_command(content)
+    return _matches_cmd(content, TOP10_QUERY_COMMANDS) and not is_top10_generate_command(content)
 
 
 def is_top100_query(content: str) -> bool:
-    normalized = normalize_text_command(content).replace("-", "")
-    return normalized in {item.replace("-", "") for item in TOP100_QUERY_COMMANDS}
+    return _matches_cmd(content, TOP100_QUERY_COMMANDS)
 
 
 def is_top100_review_query(content: str) -> bool:
-    normalized = normalize_text_command(content).replace("-", "")
-    return normalized in {item.replace("-", "") for item in TOP100_REVIEW_QUERY_COMMANDS}
+    return _matches_cmd(content, TOP100_REVIEW_QUERY_COMMANDS)
 
 
 def is_top100_review_generate_command(content: str) -> bool:
-    normalized = normalize_text_command(content).replace("-", "")
-    return normalized in {item.replace("-", "") for item in TOP100_REVIEW_GENERATE_COMMANDS}
+    return _matches_cmd(content, TOP100_REVIEW_GENERATE_COMMANDS)
 
 
 def parse_kline_predict_command(content: str) -> str | None:
@@ -191,6 +190,7 @@ class MessageDeduplicator:
     window_seconds: int = 600
     _items: dict[str, float] = field(default_factory=dict)
     _lock: Lock = field(default_factory=Lock)
+    _call_count: int = field(default=0)
 
     def is_duplicate(self, message_id: str, now_ts: float | None = None) -> bool:
         if not message_id:
@@ -198,14 +198,21 @@ class MessageDeduplicator:
         seen_at = now_ts if now_ts is not None else time.time()
 
         with self._lock:
-            expired = [
-                key for key, timestamp in self._items.items()
-                if seen_at - timestamp > self.window_seconds
-            ]
-            for key in expired:
-                self._items.pop(key, None)
+            self._call_count += 1
+            if self._call_count >= 50:
+                self._call_count = 0
+                expired = [
+                    key for key, timestamp in self._items.items()
+                    if seen_at - timestamp > self.window_seconds
+                ]
+                for key in expired:
+                    self._items.pop(key, None)
 
             if message_id in self._items:
+                # 若该条目本身已过期，视为不重复并更新时间戳
+                if seen_at - self._items[message_id] > self.window_seconds:
+                    self._items[message_id] = seen_at
+                    return False
                 return True
 
             self._items[message_id] = seen_at

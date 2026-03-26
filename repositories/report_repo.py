@@ -55,8 +55,9 @@ def save_report(
 ) -> str:
     init_db()
 
-    created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    now = datetime.now()
+    created_at = now.strftime("%Y-%m-%d %H:%M:%S")
+    timestamp = now.strftime("%Y%m%d_%H%M%S")
     safe_name = _safe_slug(stock_name, "stock")
     safe_code = _safe_slug(stock_code, "code")
     openid_suffix = _safe_slug(openid[-8:], "user")
