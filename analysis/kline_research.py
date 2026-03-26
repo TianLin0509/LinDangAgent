@@ -217,8 +217,13 @@ def summarize_rule_patterns(
     horizon: int = 5,
     min_samples: int = 30,
     pattern_col: str = "pattern_key",
+    decay_halflife_days: float = 365.0,
 ) -> pd.DataFrame:
-    """Summarize how each rule-defined pattern behaved historically."""
+    """Summarize how each rule-defined pattern behaved historically.
+
+    Recent samples are weighted higher via exponential time decay:
+    w = exp(-λ * age_days), half-life = decay_halflife_days (default 1 year).
+    """
     target_cols = [
         pattern_col,
         f"forward_return_{horizon}d",
@@ -231,20 +236,56 @@ def summarize_rule_patterns(
     if clean.empty:
         return pd.DataFrame()
 
-    grouped = (
-        clean.groupby(pattern_col)
-        .agg(
-            sample_count=(pattern_col, "size"),
-            up_prob=(f"forward_up_{horizon}d", "mean"),
-            avg_return=(f"forward_return_{horizon}d", "mean"),
-            median_return=(f"forward_return_{horizon}d", "median"),
-            avg_drawdown=(f"forward_drawdown_{horizon}d", "mean"),
-            avg_max_up=(f"forward_max_up_{horizon}d", "mean"),
-        )
-        .reset_index()
-    )
-    grouped = grouped[grouped["sample_count"] >= min_samples].copy()
-    grouped["up_prob"] = grouped["up_prob"] * 100
+    # ── 时间衰减权重 ──────────────────────────────────────────────────────────
+    if "trade_date" in clean.columns:
+        import datetime as _dt
+        today_int = int(_dt.date.today().strftime("%Y%m%d"))
+        dates = pd.to_numeric(clean["trade_date"], errors="coerce").fillna(today_int).astype(int)
+        # convert YYYYMMDD int → approximate age in days (1 month ≈ 30.4 days)
+        def _yyyymmdd_to_days(d: int) -> float:
+            y, m, day = d // 10000, (d % 10000) // 100, d % 100
+            return (today_int // 10000 - y) * 365.25 + ((today_int % 10000) // 100 - m) * 30.4 + (today_int % 100 - day)
+        age_days = np.array([_yyyymmdd_to_days(int(d)) for d in dates], dtype=float).clip(min=0)
+        lam = np.log(2) / decay_halflife_days
+        time_decay = np.exp(-lam * age_days)
+    else:
+        time_decay = np.ones(len(clean), dtype=float)
+
+    clean["_tw"] = time_decay * clean["sample_weight"].values
+
+    # ── 加权聚合 ──────────────────────────────────────────────────────────────
+    def _wavg(values: np.ndarray, weights: np.ndarray) -> float:
+        w = weights.copy()
+        w_sum = w.sum()
+        if w_sum < 1e-12:
+            return float(values.mean())
+        return float((values * w).sum() / w_sum)
+
+    records = []
+    ret_col = f"forward_return_{horizon}d"
+    up_col = f"forward_up_{horizon}d"
+    dd_col = f"forward_drawdown_{horizon}d"
+    mu_col = f"forward_max_up_{horizon}d"
+
+    for pat, grp in clean.groupby(pattern_col):
+        n = len(grp)
+        if n < min_samples:
+            continue
+        w = grp["_tw"].values
+        records.append({
+            pattern_col:    pat,
+            "sample_count": n,
+            "up_prob":      _wavg(grp[up_col].values, w) * 100,
+            "avg_return":   _wavg(grp[ret_col].values, w),
+            "median_return": float(grp[ret_col].median()),
+            "avg_drawdown": _wavg(grp[dd_col].values, w),
+            "avg_max_up":   _wavg(grp[mu_col].values, w),
+        })
+
+    if not records:
+        return pd.DataFrame()
+
+    grouped = pd.DataFrame(records)
     grouped = grouped.sort_values(["up_prob", "avg_return", "sample_count"], ascending=[False, False, False])
     return grouped.reset_index(drop=True)
 
@@ -361,8 +402,14 @@ def build_stock_research_snapshot(
     horizon: int = 5,
     feature_names: Sequence[str] | None = None,
     min_rule_samples: int = 30,
+    model_weight: float = 0.6,
 ) -> dict:
-    """Return the latest stock signal plus the historical stats of the same pattern."""
+    """Return the latest stock signal plus the historical stats of the same pattern.
+
+    ``up_probability`` is a weighted blend of the model probability (default 60%)
+    and the rule-based historical win rate (default 40%).  Pass ``model_weight=1.0``
+    to use model-only, or ``model_weight=0.0`` for rule-only.
+    """
     feature_list = list(feature_names or DEFAULT_FEATURE_COLUMNS)
     model = train_probability_model(dataset, horizon=horizon, feature_names=feature_list)
     latest = predict_latest(dataset, stock_code=stock_code, model=model)
@@ -371,6 +418,17 @@ def build_stock_research_snapshot(
     rule_stats = summarize_rule_patterns(dataset, horizon=horizon, min_samples=min_rule_samples)
     same_pattern = rule_stats[rule_stats["pattern_key"] == pattern].head(1)
     latest["pattern_stats"] = same_pattern.iloc[0].to_dict() if not same_pattern.empty else None
+
+    # ── 融合信号：model × w + rule_winrate × (1-w) ───────────────────────────
+    model_prob = latest["up_probability"]  # already in [0, 100]
+    if latest["pattern_stats"] is not None:
+        rule_prob = float(latest["pattern_stats"].get("up_prob", 50.0))
+        rule_weight = 1.0 - model_weight
+        fused = round(model_weight * model_prob + rule_weight * rule_prob, 2)
+    else:
+        fused = model_prob  # 无历史规则统计时退化为纯模型
+    latest["up_probability"] = fused
+
     return latest
 
 
@@ -582,22 +640,20 @@ def _atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int) -> pd.S
 
 def _future_window_metrics(close: np.ndarray, low: np.ndarray, high: np.ndarray, horizon: int) -> dict[str, np.ndarray]:
     n = len(close)
+    m = n - horizon  # number of valid (non-NaN) entries
     future_return = np.full(n, np.nan, dtype=float)
     future_drawdown = np.full(n, np.nan, dtype=float)
     future_max_up = np.full(n, np.nan, dtype=float)
 
-    for idx in range(n):
-        end = idx + horizon
-        if end >= n:
-            break
-        base = close[idx]
-        future_close = close[end]
-        future_slice_low = low[idx + 1 : end + 1]
-        future_slice_high = high[idx + 1 : end + 1]
+    if m > 0:
+        base = close[:m] + EPS
+        future_return[:m] = close[horizon:] / base - 1.0
 
-        future_return[idx] = future_close / (base + EPS) - 1.0
-        future_drawdown[idx] = future_slice_low.min() / (base + EPS) - 1.0
-        future_max_up[idx] = future_slice_high.max() / (base + EPS) - 1.0
+        # sliding windows over low[1..] and high[1..] of length horizon
+        low_windows = np.lib.stride_tricks.sliding_window_view(low[1:], horizon)   # (m, horizon)
+        high_windows = np.lib.stride_tricks.sliding_window_view(high[1:], horizon)  # (m, horizon)
+        future_drawdown[:m] = low_windows.min(axis=1) / base - 1.0
+        future_max_up[:m] = high_windows.max(axis=1) / base - 1.0
 
     return {
         "forward_return": future_return,

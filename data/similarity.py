@@ -8,6 +8,12 @@ import numpy as np
 import pandas as pd
 import os
 
+try:
+    import stumpy as _stumpy
+    _STUMPY_AVAILABLE = True
+except Exception:
+    _STUMPY_AVAILABLE = False
+
 from utils.cache_compat import compat_cache
 
 HISTORY_DIR = os.path.join(os.path.dirname(__file__), "history")
@@ -152,6 +158,20 @@ def _pearson_batch(target: np.ndarray, windows: np.ndarray) -> np.ndarray:
     return corrs
 
 
+def _pearson_from_mass(query: np.ndarray, ts: np.ndarray) -> np.ndarray:
+    """
+    使用 stumpy.mass 计算 query vs ts 所有子序列的皮尔逊相关系数。
+    stumpy.mass 返回 z-normalized 欧氏距离 d，皮尔逊 r = 1 - d²/(2*K)。
+    """
+    K = len(query)
+    if len(ts) < K:
+        return np.array([])
+    dist = _stumpy.mass(query, ts)
+    # clip distance to [0, sqrt(2K)] to avoid rounding errors outside valid range
+    dist = np.clip(dist, 0.0, (2 * K) ** 0.5)
+    return 1.0 - dist ** 2 / (2 * K)
+
+
 def _weighted_similarity(target_feats: dict, stock_feats: dict, k_days: int) -> np.ndarray:
     """
     计算五维加权相似度
@@ -169,10 +189,13 @@ def _weighted_similarity(target_feats: dict, stock_feats: dict, k_days: int) -> 
     for feat_name, weight in WEIGHTS.items():
         target_seq = target_feats[feat_name]
         full_seq   = stock_feats[feat_name]
-        # 滑窗
-        windows = np.lib.stride_tricks.sliding_window_view(full_seq, k_days)
-        corr = _pearson_batch(target_seq, windows)
-        total_sim += weight * corr
+        if _STUMPY_AVAILABLE:
+            corr = _pearson_from_mass(target_seq, full_seq)
+        else:
+            windows = np.lib.stride_tricks.sliding_window_view(full_seq, k_days)
+            corr = _pearson_batch(target_seq, windows)
+        if len(corr) == n_windows:
+            total_sim += weight * corr
 
     return total_sim
 
@@ -186,6 +209,7 @@ def find_similar(
     k_days: int = 5,
     top_n: int = 3,
     context_days: int = 10,
+    horizon: int = 5,
     exclude_code: str = "",
     exclude_recent_days: int = 60,
     progress_callback=None,
@@ -199,7 +223,8 @@ def find_similar(
         target_df:   目标股票日线 DataFrame（中文列名：开盘/最高/最低/收盘/成交量/涨跌幅）
         k_days:      匹配窗口天数
         top_n:       返回前 N 个匹配
-        context_days: 匹配段前后各展示多少天
+        context_days: 匹配段前后各展示多少天（仅用于上下文展示）
+        horizon:     后续收益统计的前向天数（默认 5，与 kline_research 一致）
         exclude_code: 排除的股票代码（避免自匹配）
         exclude_recent_days: 排除最近 N 天的数据
 
@@ -296,9 +321,9 @@ def find_similar(
         match_slice = slice(match_start - ctx_start, match_end - ctx_start + 1)
         ctx_df.iloc[match_slice, ctx_df.columns.get_loc("is_match")] = True
 
-        # 后续涨跌幅 + 最大回撤 + 最大涨幅
+        # 后续涨跌幅 + 最大回撤 + 最大涨幅（使用 horizon 与 kline_research 保持一致）
         if match_end + 1 < len(grp):
-            future_end = min(match_end + context_days, len(grp) - 1)
+            future_end = min(match_end + horizon, len(grp) - 1)
             match_close  = grp.iloc[match_end]["close"]
             future_close = grp.iloc[future_end]["close"]
             subsequent_ret = (future_close / match_close - 1) * 100
@@ -373,20 +398,21 @@ def find_similar(
     # ── 全样本胜率统计（基于所有超过阈值的匹配）──────────────────────
     all_returns = [c["subsequent_return"] for c in all_candidates
                    if c["subsequent_return"] is not None]
+    stat_key = f"{horizon}d"
     if all_returns:
         returns_arr = np.array(all_returns)
         match_stats = {
             "total_matches": len(all_candidates),
-            "win_rate_10d": round(float((returns_arr > 0).sum() / len(returns_arr) * 100), 1),
-            "avg_return_10d": round(float(returns_arr.mean()), 2),
-            "median_return_10d": round(float(np.median(returns_arr)), 2),
+            f"win_rate_{stat_key}": round(float((returns_arr > 0).sum() / len(returns_arr) * 100), 1),
+            f"avg_return_{stat_key}": round(float(returns_arr.mean()), 2),
+            f"median_return_{stat_key}": round(float(np.median(returns_arr)), 2),
         }
     else:
         match_stats = {
             "total_matches": len(all_candidates),
-            "win_rate_10d": 0.0,
-            "avg_return_10d": 0.0,
-            "median_return_10d": 0.0,
+            f"win_rate_{stat_key}": 0.0,
+            f"avg_return_{stat_key}": 0.0,
+            f"median_return_{stat_key}": 0.0,
         }
 
     # 将统计信息附加到每个结果
