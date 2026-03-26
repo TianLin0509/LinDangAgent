@@ -1,0 +1,308 @@
+"""数据获取 — 东财人气榜 + 雪球热门 + 成交额榜"""
+
+import logging
+import pandas as pd
+from core.cache_compat import compat_cache
+
+logger = logging.getLogger(__name__)
+
+
+@compat_cache(ttl=1800)
+def get_hot_rank(top_n: int = 100) -> tuple[pd.DataFrame, str | None]:
+    """东财人气榜"""
+    try:
+        import akshare as ak
+        df = ak.stock_hot_rank_em()
+        if df is None or df.empty:
+            return pd.DataFrame(), "人气榜数据为空"
+        df = df.head(top_n)
+        df.columns = ["排名", "代码", "股票名称", "最新价", "涨跌额", "涨跌幅"]
+        df["代码"] = df["代码"].str.replace(r"^(SH|SZ|BJ)", "", regex=True)
+        return df, None
+    except Exception as e:
+        return pd.DataFrame(), f"人气榜获取失败：{e}"
+
+
+@compat_cache(ttl=1800)
+def get_xueqiu_hot(top_n: int = 50) -> tuple[pd.DataFrame, str | None]:
+    """雪球关注热度 Top N"""
+    try:
+        import akshare as ak
+        df = ak.stock_hot_follow_xq()
+        if df is None or df.empty:
+            return pd.DataFrame(), "雪球热门数据为空"
+        df = df.head(top_n).copy()
+        df.columns = df.columns[:4]  # 取前4列，不管名字
+        df.columns = ["代码", "股票名称", "关注人数", "最新价"]
+        df["代码"] = df["代码"].astype(str).str.replace(r"^(SH|SZ|BJ)", "", regex=True)
+        df["排名"] = range(1, len(df) + 1)
+        logger.info("[xueqiu] 获取雪球热门 %d 只", len(df))
+        return df, None
+    except Exception as e:
+        return pd.DataFrame(), f"雪球热门获取失败：{e}"
+
+
+@compat_cache(ttl=1800)
+def get_volume_rank(top_n: int = 100) -> tuple[pd.DataFrame, str | None]:
+    # 优先 Tushare
+    try:
+        from top10.tushare_data import get_volume_rank_tushare, ts_ok
+        if ts_ok():
+            df, err = get_volume_rank_tushare(top_n)
+            if err is None and not df.empty:
+                return df, None
+    except Exception:
+        pass
+
+    # 备选：东方财富 HTTP 接口
+    try:
+        return _get_volume_rank_eastmoney(top_n)
+    except Exception:
+        return _get_volume_rank_akshare(top_n)
+
+
+def _get_volume_rank_eastmoney(top_n: int) -> tuple[pd.DataFrame, str | None]:
+    import requests as req
+    url = "https://push2.eastmoney.com/api/qt/clist/get"
+    params = {
+        "pn": 1, "pz": top_n, "po": 1,
+        "np": 1, "fltt": 2, "invt": 2,
+        "fid": "f6",
+        "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048",
+        "fields": "f2,f3,f5,f6,f8,f9,f10,f12,f14,f20,f23,f62",
+        "ut": "fa5fd1943c7b386f172d6893dbfba10b",
+    }
+    resp = req.get(url, params=params, timeout=15)
+    data = resp.json().get("data", {})
+    items = data.get("diff", [])
+    if not items:
+        return pd.DataFrame(), "成交额榜数据为空"
+
+    def _safe_num(v, default=0):
+        if v is None or v == "-" or isinstance(v, str):
+            return default
+        return v
+
+    rows = []
+    for i, item in enumerate(items, 1):
+        net_flow = _safe_num(item.get("f62", 0))
+        mkt_cap = _safe_num(item.get("f20", 0))
+        rows.append({
+            "排名": i,
+            "代码": item.get("f12", ""),
+            "股票名称": item.get("f14", ""),
+            "最新价": item.get("f2", 0),
+            "涨跌幅": item.get("f3", 0),
+            "成交额(亿)": round(_safe_num(item.get("f6", 0)) / 1e8, 2),
+            "换手率": _safe_num(item.get("f8", 0)),
+            "量比": _safe_num(item.get("f10", 0)),
+            "市盈率": _safe_num(item.get("f9", 0)),
+            "总市值(亿)": round(mkt_cap / 1e8, 1) if mkt_cap else 0,
+            "主力净流入(万)": round(net_flow / 1e4, 2) if net_flow else 0,
+        })
+    return pd.DataFrame(rows), None
+
+
+def _get_volume_rank_akshare(top_n: int) -> tuple[pd.DataFrame, str | None]:
+    try:
+        import akshare as ak
+        df = ak.stock_zh_a_spot_em()
+        if df is None or df.empty:
+            return pd.DataFrame(), "全量行情获取失败"
+        df = df.sort_values("成交额", ascending=False).head(top_n).reset_index(drop=True)
+        result = pd.DataFrame({
+            "排名": range(1, len(df) + 1),
+            "代码": df["代码"].values,
+            "股票名称": df["名称"].values,
+            "最新价": df["最新价"].values,
+            "涨跌幅": df["涨跌幅"].values,
+            "成交额(亿)": (df["成交额"] / 1e8).round(2).values,
+        })
+        return result, None
+    except Exception as e:
+        return pd.DataFrame(), f"成交额榜获取失败（备用方案也失败）：{e}"
+
+
+def merge_candidates(hot_df: pd.DataFrame, vol_df: pd.DataFrame,
+                     xq_df: pd.DataFrame = None) -> pd.DataFrame:
+    """合并东财人气榜 + 成交额榜 + 雪球热门，去重后返回"""
+    if xq_df is None:
+        xq_df = pd.DataFrame()
+
+    # 收集所有来源
+    parts = []
+    seen_codes = set()
+
+    # 1) 东财人气榜
+    if not hot_df.empty:
+        h = hot_df[["代码", "股票名称", "最新价", "涨跌幅"]].copy()
+        h["人气排名"] = hot_df["排名"]
+        h["来源"] = "东财人气"
+        parts.append(h)
+        seen_codes.update(h["代码"].tolist())
+
+    # 2) 雪球热门
+    if not xq_df.empty:
+        x = xq_df[["代码", "股票名称", "最新价"]].copy()
+        x["涨跌幅"] = 0.0
+        x["雪球排名"] = xq_df["排名"]
+        # 已有的标记为多榜
+        already = x["代码"].isin(seen_codes)
+        new_only = x[~already].copy()
+        if not new_only.empty:
+            new_only["来源"] = "雪球热门"
+            parts.append(new_only)
+            seen_codes.update(new_only["代码"].tolist())
+        # 给已有的补上雪球排名
+        if already.any():
+            xq_rank_map = dict(zip(xq_df["代码"], xq_df["排名"]))
+            for p in parts:
+                mask = p["代码"].isin(xq_rank_map)
+                if mask.any():
+                    p.loc[mask, "雪球排名"] = p.loc[mask, "代码"].map(xq_rank_map)
+
+    # 3) 成交额榜
+    if not vol_df.empty:
+        v = vol_df[["代码", "股票名称", "最新价", "涨跌幅"]].copy()
+        v["成交额排名"] = vol_df["排名"]
+        if "成交额(亿)" in vol_df.columns:
+            v["成交额(亿)"] = vol_df["成交额(亿)"]
+        for col in ["换手率", "量比", "市盈率", "总市值(亿)", "主力净流入(万)"]:
+            if col in vol_df.columns:
+                v[col] = vol_df[col]
+
+        already = v["代码"].isin(seen_codes)
+        new_only = v[~already].copy()
+        if not new_only.empty:
+            new_only["来源"] = "成交额榜"
+            parts.append(new_only)
+
+        # 给已有的补上成交额数据
+        v_indexed = v.set_index("代码")
+        for p in parts:
+            for col in ["成交额排名", "成交额(亿)", "换手率", "量比", "市盈率",
+                        "总市值(亿)", "主力净流入(万)"]:
+                if col in v_indexed.columns and col not in p.columns:
+                    p[col] = None
+                if col in v_indexed.columns:
+                    mask = p["代码"].isin(v_indexed.index) & (p[col].isna() if col in p.columns else True)
+                    if mask.any():
+                        p.loc[mask, col] = p.loc[mask, "代码"].map(v_indexed[col].to_dict())
+
+    if not parts:
+        return pd.DataFrame()
+
+    merged = pd.concat(parts, ignore_index=True)
+
+    # 标记多榜命中
+    for _, row in merged.iterrows():
+        sources = []
+        if pd.notna(row.get("人气排名")):
+            sources.append("东财")
+        if pd.notna(row.get("雪球排名")):
+            sources.append("雪球")
+        if pd.notna(row.get("成交额排名")):
+            sources.append("成交额")
+        if len(sources) > 1:
+            merged.loc[merged["代码"] == row["代码"], "来源"] = "+".join(sources)
+
+    merged = _fill_volume_data(merged)
+
+    for col in ["最新价", "涨跌幅", "成交额(亿)", "换手率", "量比",
+                "市盈率", "总市值(亿)", "主力净流入(万)"]:
+        if col in merged.columns:
+            merged[col] = pd.to_numeric(merged[col], errors="coerce").round(2)
+
+    for col in ["人气排名", "成交额排名", "雪球排名"]:
+        if col in merged.columns:
+            merged[col] = pd.to_numeric(merged[col], errors="coerce")
+
+    return merged.reset_index(drop=True)
+
+
+@compat_cache(ttl=1800)
+def _get_all_volume_data() -> pd.DataFrame:
+    try:
+        from top10.tushare_data import get_all_volume_data_tushare, ts_ok
+        if ts_ok():
+            df = get_all_volume_data_tushare()
+            if not df.empty:
+                return df
+    except Exception:
+        pass
+    return _get_all_volume_data_eastmoney()
+
+
+def _get_all_volume_data_eastmoney() -> pd.DataFrame:
+    try:
+        import requests as req
+        url = "https://push2.eastmoney.com/api/qt/clist/get"
+        params = {
+            "pn": 1, "pz": 5000, "po": 1,
+            "np": 1, "fltt": 2, "invt": 2,
+            "fid": "f6",
+            "fs": "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048",
+            "fields": "f2,f3,f6,f8,f10,f12,f62",
+            "ut": "fa5fd1943c7b386f172d6893dbfba10b",
+        }
+        resp = req.get(url, params=params, timeout=15)
+        items = resp.json().get("data", {}).get("diff", [])
+        if not items:
+            return pd.DataFrame()
+
+        def _safe(v):
+            if v is None or v == "-" or isinstance(v, str):
+                return 0
+            return v
+
+        rows = []
+        for i, item in enumerate(items, 1):
+            code = item.get("f12", "")
+            if not code:
+                continue
+            f6 = _safe(item.get("f6", 0))
+            f62 = _safe(item.get("f62", 0))
+            rows.append({
+                "代码": code,
+                "成交额排名_all": i,
+                "成交额(亿)_all": round(f6 / 1e8, 2) if f6 else 0,
+                "换手率_all": round(_safe(item.get("f8", 0)), 2),
+                "量比_all": round(_safe(item.get("f10", 0)), 2),
+                "主力净流入(万)_all": round(f62 / 1e4, 2) if f62 else 0,
+            })
+        return pd.DataFrame(rows)
+    except Exception:
+        return pd.DataFrame()
+
+
+def _fill_volume_data(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty:
+        return df
+
+    all_vol = _get_all_volume_data()
+    if all_vol.empty:
+        return df
+
+    vol_indexed = all_vol.set_index("代码")
+
+    if "成交额排名" not in df.columns:
+        df["成交额排名"] = None
+    mask_no_rank = df["成交额排名"].isna()
+    if mask_no_rank.any():
+        df.loc[mask_no_rank, "成交额排名"] = df.loc[mask_no_rank, "代码"].map(
+            vol_indexed["成交额排名_all"].to_dict()
+        )
+
+    for col, src_col in [("成交额(亿)", "成交额(亿)_all"),
+                          ("换手率", "换手率_all"),
+                          ("量比", "量比_all"),
+                          ("主力净流入(万)", "主力净流入(万)_all")]:
+        if col not in df.columns:
+            df[col] = None
+        mask = df[col].isna() | (df[col] == 0)
+        if mask.any():
+            df.loc[mask, col] = df.loc[mask, "代码"].map(
+                vol_indexed[src_col].to_dict()
+            )
+
+    return df

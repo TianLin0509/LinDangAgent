@@ -1,0 +1,10 @@
+{
+  "memory_rows": 3396,
+  "state_dim": 36,
+  "price_dim": 40,
+  "volume_dim": 40,
+  "state_backend": "numpy",
+  "price_backend": "numpy",
+  "volume_backend": "numpy",
+  "built_at": "2026-03-26T23:42:44"
+}

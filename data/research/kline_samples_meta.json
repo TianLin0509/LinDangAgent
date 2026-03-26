@@ -1,0 +1,21 @@
+{
+  "history_rows": 5289416,
+  "history_stocks": 5491,
+  "history_start": "2021-03-22",
+  "history_end": "2026-03-23",
+  "sample_rows": 1002027,
+  "sample_stocks": 4746,
+  "built_at": "2026-03-24T01:13:36",
+  "config": {
+    "lookback": 7,
+    "horizons": [
+      5,
+      10,
+      20
+    ],
+    "event_gap": 5,
+    "min_history": 90,
+    "min_rule_samples": 30,
+    "benchmark_code": null
+  }
+}

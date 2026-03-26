@@ -1,0 +1,23 @@
+{
+  "history_rows": 3643,
+  "history_stocks": 4,
+  "memory_rows": 3396,
+  "memory_stocks": 3,
+  "window_size": 20,
+  "history_start": "2021-03-22",
+  "history_end": "2026-03-23",
+  "built_at": "2026-03-26T23:42:42",
+  "source": "injected",
+  "config": {
+    "lookback": 20,
+    "horizons": [
+      5,
+      10,
+      20
+    ],
+    "event_gap": 1,
+    "min_history": 90,
+    "min_rule_samples": 30,
+    "benchmark_code": null
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "memory_rows": 4997486,
+  "numeric_dim": 36,
+  "text_dim": 0,
+  "numeric_backend": "numpy",
+  "text_backend": "disabled",
+  "text_enabled": false,
+  "built_at": "2026-03-26T00:46:03"
+}
