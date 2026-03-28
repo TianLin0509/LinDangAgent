@@ -25,11 +25,14 @@ HISTORY_FILE = os.path.join(HISTORY_DIR, "all_daily.parquet")
 # ══════════════════════════════════════════════════════════════════════════════
 
 WEIGHTS = {
-    "pct_chg":      0.35,   # 涨跌幅形态
-    "amplitude":    0.25,   # 振幅（实体大小）
-    "vol_chg":      0.20,   # 成交量变化率
-    "upper_shadow": 0.10,   # 上影线比例
-    "lower_shadow": 0.10,   # 下影线比例
+    "pct_chg":        0.22,   # 涨跌幅形态
+    "amplitude":      0.15,   # 振幅（实体大小）
+    "vol_chg":        0.15,   # 成交量变化率
+    "upper_shadow":   0.08,   # 上影线比例
+    "lower_shadow":   0.08,   # 下影线比例
+    "close_position": 0.12,   # 收盘位置比 (close-low)/(high-low) — 多空力量
+    "gap_ratio":      0.10,   # 缺口比例 (open-prev_close)/prev_close — 跳空信号
+    "rel_volume":     0.10,   # 相对成交量 vol/MA20_vol — 量能异常
 }
 
 
@@ -82,6 +85,29 @@ def _calc_vol_change(vol_arr):
     return np.clip(vol_chg, -5, 5)
 
 
+def _calc_close_position(high_arr, low_arr, close_arr):
+    """收盘位置比 = (close - low) / (high - low)，反映多空力量"""
+    hl_range = high_arr - low_arr + 1e-10
+    return (close_arr - low_arr) / hl_range
+
+
+def _calc_gap_ratio(open_arr, close_arr):
+    """缺口比例 = (open[i] - close[i-1]) / close[i-1]，第一天填0"""
+    gap = np.zeros(len(open_arr))
+    gap[1:] = (open_arr[1:] - close_arr[:-1]) / (close_arr[:-1] + 1e-10)
+    return np.clip(gap, -0.2, 0.2)
+
+
+def _calc_rel_volume(vol_arr, period=20):
+    """相对成交量 = vol / MA(vol, 20)，衡量量能异常程度"""
+    if len(vol_arr) < period:
+        return np.ones(len(vol_arr))
+    vol_s = pd.Series(vol_arr)
+    ma_vol = vol_s.rolling(period, min_periods=1).mean()
+    rel = vol_s / (ma_vol + 1e-10)
+    return np.clip(rel.values, 0, 10)
+
+
 def extract_features_from_target(df: pd.DataFrame, k_days: int) -> dict[str, np.ndarray] | None:
     """
     从目标股票 DataFrame 提取五维特征（中文列名）
@@ -98,17 +124,20 @@ def extract_features_from_target(df: pd.DataFrame, k_days: int) -> dict[str, np.
     v = recent["成交量"].values.astype(np.float64)
 
     return {
-        "pct_chg":      recent["涨跌幅"].values.astype(np.float64),
-        "amplitude":    _calc_amplitude(o, h, l),
-        "vol_chg":      _calc_vol_change(v),
-        "upper_shadow": _calc_upper_shadow(o, h, c, l),
-        "lower_shadow": _calc_lower_shadow(o, h, c, l),
+        "pct_chg":        recent["涨跌幅"].values.astype(np.float64),
+        "amplitude":      _calc_amplitude(o, h, l),
+        "vol_chg":        _calc_vol_change(v),
+        "upper_shadow":   _calc_upper_shadow(o, h, c, l),
+        "lower_shadow":   _calc_lower_shadow(o, h, c, l),
+        "close_position": _calc_close_position(h, l, c),
+        "gap_ratio":      _calc_gap_ratio(o, c),
+        "rel_volume":     _calc_rel_volume(v),
     }
 
 
 def extract_all_features_for_stock(grp: pd.DataFrame) -> dict[str, np.ndarray]:
     """
-    从单只股票完整日线提取五维特征序列（英文列名，历史数据）
+    从单只股票完整日线提取八维特征序列（英文列名，历史数据）
     返回 {"pct_chg": array(N,), "amplitude": array(N,), ...}
     """
     o = grp["open"].values.astype(np.float64)
@@ -118,11 +147,14 @@ def extract_all_features_for_stock(grp: pd.DataFrame) -> dict[str, np.ndarray]:
     v = grp["vol"].values.astype(np.float64)
 
     return {
-        "pct_chg":      grp["pct_chg"].values.astype(np.float64),
-        "amplitude":    _calc_amplitude(o, h, l),
-        "vol_chg":      _calc_vol_change(v),
-        "upper_shadow": _calc_upper_shadow(o, h, c, l),
-        "lower_shadow": _calc_lower_shadow(o, h, c, l),
+        "pct_chg":        grp["pct_chg"].values.astype(np.float64),
+        "amplitude":      _calc_amplitude(o, h, l),
+        "vol_chg":        _calc_vol_change(v),
+        "upper_shadow":   _calc_upper_shadow(o, h, c, l),
+        "lower_shadow":   _calc_lower_shadow(o, h, c, l),
+        "close_position": _calc_close_position(h, l, c),
+        "gap_ratio":      _calc_gap_ratio(o, c),
+        "rel_volume":     _calc_rel_volume(v),
     }
 
 

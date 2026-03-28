@@ -13,7 +13,7 @@ from fastapi import BackgroundTasks, FastAPI, Query, Request
 from fastapi.responses import HTMLResponse, Response
 
 from repositories.report_repo import get_report as load_report
-from repositories.report_repo import init_db, save_report
+from repositories.report_repo import init_db, save_report, DB_PATH
 from services import rank_service, wechat_command_service, wechat_dispatch_service
 from services.analysis_service import generate_report_bundle
 from services.prebuilt_kline_service import (
@@ -58,6 +58,30 @@ logger.propagate = False
 
 app = FastAPI()
 init_db()
+
+
+@app.on_event("startup")
+async def _startup():
+    """启动时注册知识库定时任务。"""
+    try:
+        from knowledge.scheduler import start_scheduler
+        start_scheduler()
+    except Exception as exc:
+        logger.warning("knowledge scheduler startup failed: %r", exc)
+
+
+@app.get("/api/health")
+async def health_check():
+    """健康检查端点 — 供负载均衡和监控使用"""
+    from data.tushare_client import get_data_source, get_ts_error
+    checks = {
+        "status": "ok",
+        "timestamp": datetime.now().isoformat(),
+        "data_source": get_data_source(),
+        "tushare_error": get_ts_error() or None,
+        "db_path": str(DB_PATH) if DB_PATH.exists() else "missing",
+    }
+    return checks
 
 
 def _fmt_money(value: object) -> str:
@@ -639,6 +663,38 @@ def get_token_balance(model_name: str | None = Query(default=None)):
     except Exception as exc:
         logger.exception("token balance endpoint failed to initialize: %s", exc)
         return {"status": "error", "message": f"token balance service unavailable: {exc}"}
+
+
+@app.get("/api/knowledge/stats")
+def get_knowledge_stats():
+    """知识库状态概览。"""
+    try:
+        from knowledge.analyst_scorecard import load_scorecard
+        from knowledge.outcome_tracker import get_accuracy_summary
+        from knowledge.regime_detector import get_current_regime
+
+        return {
+            "regime": get_current_regime(),
+            "accuracy": get_accuracy_summary(days=90),
+            "scorecard_summary": {
+                k: v for k, v in load_scorecard().items()
+                if k in ("sample_count", "directional_count", "overall", "last_updated")
+            },
+        }
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+@app.post("/api/knowledge/update")
+def trigger_knowledge_update():
+    """手动触发知识库更新。"""
+    try:
+        from knowledge.scheduler import run_knowledge_update
+        results = run_knowledge_update()
+        return {"status": "ok", "results": results}
+    except Exception as exc:
+        logger.exception("knowledge update failed: %r", exc)
+        return {"status": "error", "message": str(exc)}
 
 
 if __name__ == "__main__":

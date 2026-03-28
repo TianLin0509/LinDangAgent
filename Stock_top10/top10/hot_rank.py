@@ -217,7 +217,48 @@ def merge_candidates(hot_df: pd.DataFrame, vol_df: pd.DataFrame,
         if col in merged.columns:
             merged[col] = pd.to_numeric(merged[col], errors="coerce")
 
+    # ── 风险过滤 ──────────────────────────────────────────────────────
+    merged = _apply_risk_filters(merged)
+
     return merged.reset_index(drop=True)
+
+
+def _apply_risk_filters(df: pd.DataFrame) -> pd.DataFrame:
+    """过滤不适合推荐的高风险标的"""
+    if df.empty:
+        return df
+
+    before = len(df)
+
+    # 1. 市值过滤：排除总市值 < 30 亿的微盘股（操纵风险高）
+    if "总市值(亿)" in df.columns:
+        df = df[~((df["总市值(亿)"].notna()) & (df["总市值(亿)"] < 30))]
+
+    # 2. 流动性过滤：排除成交额 < 1 亿的低流动性标的
+    if "成交额(亿)" in df.columns:
+        df = df[~((df["成交额(亿)"].notna()) & (df["成交额(亿)"] < 1))]
+
+    # 3. 股价过滤：排除 < 2 元的低价股（ST/退市风险）
+    if "最新价" in df.columns:
+        df = df[~((df["最新价"].notna()) & (df["最新价"] < 2))]
+
+    # 4. 连续暴涨过滤：涨幅 > 15% 的标的标记高追风险
+    #    （不删除，但追加风险标记供后续评分参考）
+    if "涨跌幅" in df.columns:
+        df["_追高风险"] = (df["涨跌幅"].fillna(0) > 15)
+
+    # 5. 代码过滤：排除 ST/*ST（代码以 ST 开头的名称）
+    if "股票名称" in df.columns:
+        df = df[~df["股票名称"].astype(str).str.contains(r"^(\*?ST|S )", regex=True, na=False)]
+
+    # 6. 板块集中度限制：同行业最多保留 3 只（需要行业数据，若无则跳过）
+    # 此项需要外部行业数据，暂不实现硬过滤，留给 AI 评分阶段处理
+
+    filtered = before - len(df)
+    if filtered > 0:
+        logger.info("[risk_filter] 过滤了 %d 只高风险标的（剩余 %d 只）", filtered, len(df))
+
+    return df
 
 
 @compat_cache(ttl=1800)

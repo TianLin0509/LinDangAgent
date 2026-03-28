@@ -168,7 +168,8 @@ def _split_report_and_summary(markdown_text: str) -> tuple[str, str]:
         parts = cleaned.split("<<<REPORT_END>>>")
         if len(parts) >= 2:
             summary_text = parts[-1].strip()
-            summary_text = re.sub(r"^\s*#\s*💡\s*核心摘要\s*", "", summary_text).strip()
+            # 兼容新旧标题格式（带/不带 emoji）
+            summary_text = re.sub(r"^\s*#\s*(?:💡\s*)?核心摘要\s*", "", summary_text).strip()
             summary_text = re.sub(r"\s+", " ", summary_text)
             report_body = parts[0].strip()
             if summary_text and report_body:
@@ -219,12 +220,25 @@ def run_comprehensive_analysis(
     indicators = compute_indicators(report_price_df)
     ind_section = format_indicators_section(indicators)
 
+    # 知识库注入（不影响主流程，异常时静默跳过）
+    knowledge_ctx = ""
+    try:
+        from knowledge.injector import build_knowledge_context
+        knowledge_ctx = build_knowledge_context(
+            stock_code=ts_code,
+            stock_name=name,
+            model_name=selected_model,
+        )
+    except Exception:
+        pass
+
     user_prompt, system_prompt = build_report_prompt(
         name,
         ts_code,
         context,
         price_snap,
         ind_section,
+        knowledge_context=knowledge_ctx,
     )
 
     heartbeat_tips = [

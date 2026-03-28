@@ -19,9 +19,17 @@ def _ensure_storage() -> None:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def _get_conn() -> sqlite3.Connection:
+    """获取 SQLite 连接，开启 WAL 模式提升并发性能。"""
+    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
+    return conn
+
+
 def init_db() -> None:
     _ensure_storage()
-    with sqlite3.connect(DB_PATH) as conn:
+    with _get_conn() as conn:
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS reports (
@@ -34,6 +42,13 @@ def init_db() -> None:
                 created_at TEXT NOT NULL
             )
             """
+        )
+        # 添加索引提升查询性能
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_reports_openid ON reports(openid)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_reports_created ON reports(created_at)"
         )
         conn.commit()
 
@@ -65,7 +80,7 @@ def save_report(
     markdown_path = REPORTS_DIR / filename
     markdown_path.write_text(markdown_text, encoding="utf-8")
 
-    with sqlite3.connect(DB_PATH) as conn:
+    with _get_conn() as conn:
         conn.execute(
             """
             INSERT INTO reports (
@@ -90,7 +105,7 @@ def save_report(
 def get_report(report_id: str) -> dict | None:
     init_db()
 
-    with sqlite3.connect(DB_PATH) as conn:
+    with _get_conn() as conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute(
             """
