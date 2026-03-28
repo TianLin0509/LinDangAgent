@@ -19,6 +19,9 @@ _running_lock = threading.Lock()
 _is_running = False
 _STALE_STATUS_SECONDS = 20 * 60
 
+# Unicode escape to avoid emoji encoding issues on Windows
+_DEFAULT_MODEL = "\U0001f7e3 \u8c46\u5305 \u00b7 Seed 2.0 Pro"  # 🟣 豆包 · Seed 2.0 Pro
+
 
 def _status_file() -> str:
     return os.path.join(_STATUS_DIR, f"{date.today().isoformat()}_deep_status.json")
@@ -81,7 +84,7 @@ def is_deep_running() -> bool:
 
 
 def run_deep_top10(
-    model_name: str = "🟣 豆包 · Seed 2.0 Pro",
+    model_name: str = _DEFAULT_MODEL,
     candidate_count: int = 100,
     username: str = "auto_scheduler",
     progress_callback=None,
@@ -125,6 +128,7 @@ def run_deep_top10(
     _write_status(status)
 
     tokens_before = get_token_usage()["total"]
+    scored = None  # track partial results
 
     try:
         status["phase"] = "获取候选池"
@@ -238,8 +242,34 @@ def run_deep_top10(
 
     except Exception as exc:
         logger.error("[deep_top10] 异常: %s", exc, exc_info=True)
-        status["status"] = "error"
-        status["error"] = str(exc)
+
+        # Save partial results if any stocks were scored
+        tokens_after = get_token_usage()["total"]
+        tokens_used = tokens_after - tokens_before
+        if scored is not None and not scored.empty:
+            _log(f"⚠️ 中途失败，但已完成 {len(scored)} 只研报，保存部分结果...")
+            try:
+                save_cached_result(
+                    model_name,
+                    scored,
+                    f"（部分结果）生成过程中出错：{exc}",
+                    triggered_by=username,
+                    tokens_used=tokens_used,
+                )
+                status["status"] = "done"
+                status["phase"] = "部分完成"
+                status["error"] = str(exc)
+                status["scored_count"] = len(scored)
+            except Exception as save_exc:
+                logger.error("[deep_top10] 保存部分结果失败: %s", save_exc)
+                status["status"] = "error"
+                status["error"] = str(exc)
+        else:
+            status["status"] = "error"
+            status["error"] = str(exc)
+
+        status["finished"] = datetime.now().isoformat()
+        status["tokens_used"] = tokens_used
         _write_status(status)
     finally:
         with _running_lock:
@@ -247,7 +277,7 @@ def run_deep_top10(
 
 
 def start_deep_top10_async(
-    model_name: str = "🟣 豆包 · Seed 2.0 Pro",
+    model_name: str = _DEFAULT_MODEL,
     candidate_count: int = 100,
     username: str = "auto_scheduler",
 ):
