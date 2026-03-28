@@ -62,39 +62,91 @@ def _cleanup_report_text(text: str) -> str:
     return "\n".join(fixed_lines).strip()
 
 
+# 权重配置（代码计算，不依赖 LLM 算数）
+SCORE_WEIGHTS = {
+    "基本面": 0.15,
+    "预期差": 0.35,
+    "资金面": 0.30,
+    "技术面": 0.20,
+}
+
+
 def parse_scores(text: str) -> dict | None:
+    """从 <<<SCORES>>>...<<<END_SCORES>>> 块提取评分并在代码中加权计算。"""
     match = re.search(r"<<<SCORES>>>(.*?)<<<END_SCORES>>>", text, re.DOTALL)
     if not match:
         return None
 
     block = match.group(1)
     scores: dict[str, float] = {}
+    flags: dict[str, str] = {}
+
     for line in block.strip().splitlines():
         line = line.strip()
         if not line or line == "---":
             continue
+        # 解析 "基本面: 7/10" 格式
         parsed = re.match(r"(.+?)[:：]\s*(\d+(?:\.\d+)?)\s*/\s*10", line)
         if parsed:
             scores[parsed.group(1).strip()] = float(parsed.group(2))
+            continue
+        # 解析 "S级豁免: 是/否" 和 "致命缺陷: 有/无" 格式
+        flag_parsed = re.match(r"(.+?)[:：]\s*(.+)", line)
+        if flag_parsed:
+            flags[flag_parsed.group(1).strip()] = flag_parsed.group(2).strip()
 
-    scores.pop("舆情情绪", None)
-    scores.pop("舆情", None)
-    return scores or None
+    if not scores:
+        return None
+
+    # 代码计算加权综合分
+    weighted_sum = 0.0
+    total_weight = 0.0
+    for dim, weight in SCORE_WEIGHTS.items():
+        if dim in scores:
+            weighted_sum += scores[dim] * weight
+            total_weight += weight
+
+    if total_weight > 0:
+        scores["综合加权"] = round(weighted_sum / total_weight, 1)
+
+    # S级豁免与致命缺陷标记
+    scores["_s_exempt"] = flags.get("S级豁免", "否") in ("是", "yes", "Yes")
+    scores["_has_fatal"] = flags.get("致命缺陷", "无") in ("有", "yes", "Yes")
+
+    return scores
 
 
 def apply_bucket_correction(scores: dict) -> dict:
+    """木桶效应修正 + 熔断：基本面≤3且无S级豁免则总分上限4分。"""
     dims = ["基本面", "预期差", "技术面", "资金面"]
     dim_scores = [scores.get(dim, 5) for dim in dims]
     min_score = min(dim_scores)
 
-    if min_score <= 3:
-        if "综合加权" in scores:
-            scores["综合加权"] = min(scores["综合加权"], 4.0)
-        weakest = [dim for dim in dims if scores.get(dim, 5) <= 3]
-        scores["_fatal_flaw"] = f"{'、'.join(weakest)}评分<=3，触发木桶修正"
+    s_exempt = scores.get("_s_exempt", False)
+
+    if min_score <= 3 and not s_exempt:
+        # 熔断：基本面致命缺陷且无豁免
+        if scores.get("基本面", 5) <= 3:
+            scores["综合加权"] = min(scores.get("综合加权", 0), 2.0)
+            scores["_fatal_flaw"] = "基本面评分≤3且无S级豁免，触发熔断"
+        else:
+            scores["综合加权"] = min(scores.get("综合加权", 0), 4.0)
+            weakest = [dim for dim in dims if scores.get(dim, 5) <= 3]
+            scores["_fatal_flaw"] = f"{'、'.join(weakest)}评分≤3，触发木桶修正"
         scores["_bucket_corrected"] = True
     else:
         scores["_bucket_corrected"] = False
+
+    # 操作评级（代码计算）
+    composite = scores.get("综合加权", 5)
+    if composite >= 8:
+        scores["_rating"] = "高匹配"
+    elif composite >= 6:
+        scores["_rating"] = "中匹配"
+    elif composite >= 3:
+        scores["_rating"] = "低匹配"
+    else:
+        scores["_rating"] = "坚决规避"
 
     return scores
 

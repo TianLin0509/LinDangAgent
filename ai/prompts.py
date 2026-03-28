@@ -11,6 +11,7 @@ import json
 import pandas as pd
 from datetime import datetime, timedelta
 from data.tushare_client import to_code6
+from ai.prompts_report import smart_truncate
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -67,7 +68,8 @@ _SCORE_ANCHOR = """
 # ══════════════════════════════════════════════════════════════════════════════
 
 def build_expectation_prompt(name, ts_code, info, financial="",
-                              df=None) -> tuple[str, str]:
+                              df=None, forecast="", express="",
+                              disclosure="") -> tuple[str, str]:
     """构建预期差分析 prompt，返回 (prompt, system)"""
     today_str = datetime.now().strftime("%Y年%m月%d日")
     future_start = datetime.now().strftime("%Y年%m月")
@@ -84,6 +86,16 @@ def build_expectation_prompt(name, ts_code, info, financial="",
         f"如果信息不足无法判断，直接说明信息缺失，不要编造。"
     )
 
+    # 构建业绩预告/快报/披露日期段（Tushare 实时数据）
+    extra_data_parts = []
+    if forecast and "暂无" not in forecast:
+        extra_data_parts.append(f"## 业绩预告（Tushare实时）\n{forecast[:800]}")
+    if express and "暂无" not in express:
+        extra_data_parts.append(f"## 业绩快报（Tushare实时）\n{express[:800]}")
+    if disclosure and "暂无" not in disclosure:
+        extra_data_parts.append(f"## 财报披露日期\n{disclosure[:500]}")
+    extra_data = "\n\n".join(extra_data_parts)
+
     prompt = f"""## 分析标的：{name}（{to_code6(ts_code)}）
 ## 当前日期：{today_str}
 
@@ -91,15 +103,13 @@ def build_expectation_prompt(name, ts_code, info, financial="",
 {info_str}
 {price_snap}
 
-## 核心财务数据
-{fin_snap if fin_snap else '暂无（请通过搜索补充）'}
+## 核心财务数据（Tushare实时）
+{fin_snap if fin_snap else '暂无财务数据'}
+
+{extra_data}
 
 ---
-⚠️ 本系统不提供新闻数据。请通过联网搜索功能，主动搜索以下信息：
-1. {name} 最近1个月的卖方研报（特别关注目标价和盈利预测调整方向）
-2. {name} 最近的公告、业绩快报、业绩预告
-3. 所在行业近期的政策动态和产业趋势
-请确保分析基于最新信息。
+⚠️ 以上财务/业绩数据来自 Tushare 实时接口，请以此为准。如需补充新闻、研报等定性信息，可通过联网搜索获取。
 
 请进行深度预期差分析（输出中文）：
 
@@ -177,24 +187,26 @@ def build_trend_prompt(name, ts_code, price_smry, capital, dragon,
     )
     prompt = f"""## 分析标的：{name}（{to_code6(ts_code)}）
 
-## K线及量价数据
+## K线及量价数据（Tushare实时）
 {price_smry}
 
 {indicators_section}
 
-## 主力资金流向（近15日）
-{capital[:900] if capital else '暂无'}
+## 主力资金流向（Tushare实时，近15日）
+{smart_truncate(capital, 900) if capital else '暂无'}
 
-## 龙虎榜记录（近30日）
-{dragon[:500] if dragon else '无记录'}
+## 龙虎榜记录（Tushare实时，近30日）
+{smart_truncate(dragon, 500) if dragon else '无记录'}
 
-## 北向资金持仓变化
-{northbound[:500] if northbound else '暂无数据'}
+## 北向资金持仓变化（Tushare实时）
+{smart_truncate(northbound, 500) if northbound else '暂无数据'}
 
-## 融资融券数据
-{margin[:500] if margin else '暂无数据'}
+## 融资融券数据（Tushare实时）
+{smart_truncate(margin, 500) if margin else '暂无数据'}
 
 ---
+⚠️ 以上所有行情数据来自 Tushare 实时接口，请以此为准，不要编造或猜测数据。
+
 请按以下框架进行多维度技术分析（输出中文）：
 
 ### 一、多周期趋势定位（先看大局）
@@ -282,8 +294,8 @@ def build_fundamentals_prompt(name, ts_code, info, financial) -> tuple[str, str]
 ## 基本信息
 {info_str}
 
-## 财务数据
-{financial[:2500] if financial else '暂无'}
+## 财务数据（Tushare实时）
+{smart_truncate(financial, 2500) if financial else '暂无'}
 
 ---
 请进行全面基本面剖析（输出中文）：
@@ -368,7 +380,8 @@ def build_fundamentals_prompt(name, ts_code, info, financial) -> tuple[str, str]
 # 4. 舆情情绪分析
 # ══════════════════════════════════════════════════════════════════════════════
 
-def build_sentiment_prompt(name, ts_code, info) -> tuple[str, str]:
+def build_sentiment_prompt(name, ts_code, info, margin_data="",
+                           northbound_data="", capital_data="") -> tuple[str, str]:
     """构建舆情/情绪分析 prompt，返回 (prompt, system)"""
     today_str = datetime.now().strftime("%Y年%m月%d日")
     code6 = to_code6(ts_code)
@@ -382,18 +395,27 @@ def build_sentiment_prompt(name, ts_code, info) -> tuple[str, str]:
         f"\n🎯 输出质量要求：每条观点必须标注具体来源（平台+用户/机构名），不要编造来源。"
     )
 
+    # 注入 Tushare 实时资金面数据作为情绪硬指标
+    fund_flow_section = ""
+    fund_parts = []
+    if margin_data and "暂无" not in margin_data:
+        fund_parts.append(f"## 融资融券数据（Tushare实时，可作为杠杆情绪指标）\n{margin_data[:600]}")
+    if northbound_data and "暂无" not in northbound_data:
+        fund_parts.append(f"## 北向资金（Tushare实时，外资态度指标）\n{northbound_data[:600]}")
+    if capital_data and "暂无" not in capital_data:
+        fund_parts.append(f"## 主力资金流向（Tushare实时）\n{capital_data[:600]}")
+    if fund_parts:
+        fund_flow_section = "\n\n".join(fund_parts)
+
     prompt = f"""## 分析标的：{name}（{code6}）
 ## 当前日期：{today_str}
 ## 基本信息
 {info_str}
 
+{fund_flow_section}
+
 ---
-## 搜索任务
-请联网搜索 {name}（{code6}）在以下平台的最新讨论：
-1. **雪球** — 大V观点、深度分析帖（忽略水帖）
-2. **东方财富股吧** — 精华帖、高点赞帖（忽略纯情绪宣泄）
-3. **财经媒体** — 近2周有实质信息的报道（证券时报、财联社等）
-4. **卖方研报** — 近1个月的评级变化
+⚠️ 以上资金面数据来自 Tushare 实时接口，是量化情绪的硬指标。如需补充舆情讨论、新闻等定性信息，可通过联网搜索获取。
 
 筛选标准：只关注有具体数据/逻辑/信息增量的内容，忽略一切广告、荐股、水帖。
 
@@ -480,8 +502,8 @@ def build_sector_prompt(name, ts_code, info, sector_data="") -> tuple[str, str]:
 ## 基本信息
 {info_str}
 
-## 同行业数据
-{sector_data if sector_data else '（需联网搜索补充）'}
+## 同行业估值对比数据（Tushare实时）
+{sector_data if sector_data else '同行业数据获取失败'}
 
 ---
 ⚠️ 请联网搜索 {industry} 板块近期表现、板块资金流向、板块内主要个股数据。
@@ -567,17 +589,17 @@ def build_holders_prompt(name, ts_code, info, holders_data="",
 ## 基本信息
 {info_str}
 
-## 十大股东/流通股东数据
-{holders_data if holders_data else '（需联网搜索补充）'}
+## 十大股东/流通股东数据（Tushare实时）
+{holders_data if holders_data else '暂无数据'}
 
-## 股权质押数据
-{pledge_data if pledge_data else '（需联网搜索补充）'}
+## 股权质押数据（Tushare实时）
+{pledge_data if pledge_data else '暂无数据'}
 
-## 基金持仓变动数据
-{fund_data if fund_data else '（需联网搜索补充）'}
+## 基金持仓变动数据（Tushare实时）
+{fund_data if fund_data else '暂无数据'}
 
 ---
-⚠️ 请联网搜索 {name}（{code6}）的最新股东信息、机构持仓变动、减持/增持公告、解禁信息。
+⚠️ 以上股东/质押/基金数据来自 Tushare 实时接口，请以此为准。如需补充增减持公告等定性信息，可通过联网搜索获取。
 
 ### 一、筹码集中度分析（最重要的先行指标）
 | 项目 | 最新数据 | 前期数据 | 变化趋势 | 信号 |

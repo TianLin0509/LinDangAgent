@@ -22,6 +22,9 @@ BLUE_TEAM_USER = """# 蓝军挑战报告
 ## 待审查的红军分析报告
 {red_team_report}
 
+## 关键原始数据（用于交叉验证红军论点）
+{raw_data_snapshot}
+
 ## 请严格按以下结构输出
 
 ---
@@ -85,10 +88,11 @@ BLUE_TEAM_USER = """# 蓝军挑战报告
 FINAL_VERDICT_SYSTEM = """你是投资决策委员会主席。面前有分析师（红军）的报告和风控官（蓝军）的质疑。你做最终裁决。
 
 准则：
-1. 不偏袒——只看逻辑硬度和证据质量
+1. 不偏袒——只看逻辑硬度和证据质量，特别是与原始数据的一致性
 2. 每个分歧点逐条裁决谁更有道理，不能说"各有道理"
 3. 最终结论可以和红军一致、蓝军一致、或第三种判断
 4. 裁决必须有理由
+5. 评分统一使用 1-10 分制
 
 🔴蓝军胜（红军被推翻）🟢红军胜（质疑不成立）🟡各有道理需折中"""
 
@@ -212,10 +216,33 @@ def truncate_report_for_challenge(full_report: str, max_chars: int = 12000) -> s
     return "[注：以下为分析报告的结论精要版]\n\n" + result
 
 
-def build_blue_team_prompt(red_team_report: str) -> tuple[str, str]:
-    """构建蓝军 prompt"""
+def build_raw_data_snapshot(context: dict = None) -> str:
+    """从 report context 中提取关键原始数据快照供蓝军交叉验证。"""
+    if not context:
+        return "（未提供原始数据）"
+    parts = []
+    for key, label in [
+        ("fina_indicator", "核心财务指标"),
+        ("risk_checklist", "风险排查"),
+        ("dupont", "杜邦分析"),
+        ("fcf", "自由现金流"),
+        ("capital", "资金流向"),
+        ("holders", "十大股东"),
+        ("pledge", "股权质押"),
+    ]:
+        val = context.get(key, "")
+        if val and val != "暂无" and "暂无数据" not in val:
+            # 每项最多 500 字
+            parts.append(f"**{label}**：{val[:500]}")
+    return "\n\n".join(parts) if parts else "（原始数据不足）"
+
+
+def build_blue_team_prompt(red_team_report: str, context: dict = None) -> tuple[str, str]:
+    """构建蓝军 prompt，注入原始数据快照增强质疑深度"""
     truncated = truncate_report_for_challenge(red_team_report)
+    snapshot = build_raw_data_snapshot(context)
     user = BLUE_TEAM_USER.replace("{red_team_report}", truncated)
+    user = user.replace("{raw_data_snapshot}", snapshot)
     return user, BLUE_TEAM_SYSTEM
 
 

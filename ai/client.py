@@ -1,6 +1,7 @@
 """AI 客户端 — 多 Provider 统一调用层"""
 
 import logging
+import re
 import time as _time
 import threading
 from openai import OpenAI, APIConnectionError, AuthenticationError, RateLimitError
@@ -98,6 +99,40 @@ def _build_extra(cfg: dict) -> dict:
     return extra
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# 搜索指令动态注入/移除
+# ══════════════════════════════════════════════════════════════════════════════
+
+_SEARCH_PATTERNS = [
+    re.compile(r'⚠️[^\n]*(?:搜索|联网|search)[^\n]*\n?', re.IGNORECASE),
+    re.compile(r'## 🔍 联网搜索指令[^\n]*\n(?:.*\n)*?(?=---|\n##|\Z)', re.MULTILINE),
+    re.compile(r'## 搜索任务\n(?:.*\n)*?(?=---|\n##|\Z)', re.MULTILINE),
+    re.compile(r'### 必搜来源[^\n]*\n(?:.*\n)*?(?=---|\n##|\Z)', re.MULTILINE),
+    re.compile(r'请(?:联网|通过联网)?搜索[^。\n]*[。\n]', re.MULTILINE),
+    re.compile(r'请确保分析基于最新信息。\n?'),
+]
+
+_NO_SEARCH_SUFFIX = (
+    "\n\n【重要】你无法联网搜索，所有分析必须严格基于上方注入的数据。"
+    '缺失的信息直接标注"数据不足，无法判断"，绝不编造新闻、研报或公告内容。'
+)
+
+
+def strip_search_directives(prompt: str, supports_search: bool) -> str:
+    """根据模型能力动态处理 prompt 中的搜索指令。
+    supports_search=True  → 原样返回
+    supports_search=False → 删除搜索指令 + 追加无搜索声明
+    """
+    if supports_search:
+        return prompt
+    cleaned = prompt
+    for pat in _SEARCH_PATTERNS:
+        cleaned = pat.sub('', cleaned)
+    # 清理连续空行
+    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
+    return cleaned.rstrip() + _NO_SEARCH_SUFFIX
+
+
 class StreamResult:
     """流式输出结果容器 — 可迭代，完成后获取 full_text"""
 
@@ -123,6 +158,7 @@ def call_ai_stream(client: OpenAI, cfg: dict, prompt: str,
     流式调用 AI 模型，yield 文本片段。
     返回 StreamResult 对象（可迭代 + full_text 属性）。
     """
+    prompt = strip_search_directives(prompt, cfg.get("supports_search", False))
     messages = _build_messages(prompt, system)
 
     def _generate():
@@ -157,9 +193,9 @@ def call_ai_stream(client: OpenAI, cfg: dict, prompt: str,
                     full += text
                     yield text
 
-            # 流结束后粗估 token
-            est_prompt = int(len(prompt) * 1.5)
-            est_completion = int(len(full) * 1.5)
+            # 流结束后粗估 token（中文≈0.7 token/字）
+            est_prompt = int(len(prompt) * 0.7)
+            est_completion = int(len(full) * 0.7)
             add_tokens(
                 prompt_tokens=est_prompt,
                 completion_tokens=est_completion,
@@ -187,6 +223,7 @@ def call_ai(client: OpenAI, cfg: dict, prompt: str,
     豆包走 responses API，其他走 chat.completions。
     username 用于 per-user token 持久化。
     """
+    prompt = strip_search_directives(prompt, cfg.get("supports_search", False))
     messages = _build_messages(prompt, system)
 
     # 豆包专属路径
@@ -194,7 +231,7 @@ def call_ai(client: OpenAI, cfg: dict, prompt: str,
         text, err = doubao_call(cfg, messages, max_tokens)
         if not err:
             # 豆包按字符粗估 token（中文约 1.5 token/字）
-            est = int((len(prompt) + len(text)) * 1.5)
+            est = int((len(prompt) + len(text)) * 0.7)
             add_tokens(total_tokens=est, username=username)
         return text, err
 
@@ -256,8 +293,8 @@ def call_ai_chat(client: OpenAI, cfg: dict, messages: list[dict],
     if cfg.get("provider") == "doubao" and cfg.get("supports_search"):
         text, err = doubao_call(cfg, messages, max_tokens)
         if not err:
-            est = int(sum(len(m.get("content", "")) for m in messages) * 1.5)
-            est += int(len(text) * 1.5)
+            est = int(sum(len(m.get("content", "")) for m in messages) * 0.7)
+            est += int(len(text) * 0.7)
             add_tokens(total_tokens=est, username=username)
         return text, err
 

@@ -40,7 +40,7 @@ LOG_PATH = LOG_DIR / "wechat_server.log"
 PROMPT_HTML_PATH = BASE_DIR / "storage" / "current_stock_prompt.html"
 TOP10_REPO_DIR = rank_service.get_top10_repo_dir(BASE_DIR)
 TOP10_CACHE_DIR = TOP10_REPO_DIR / "cache"
-TOP10_DEFAULT_MODEL = get_secret("TOP10_MODEL_NAME", "Seed 2.0 Pro")
+TOP10_DEFAULT_MODEL = get_secret("TOP10_MODEL_NAME", "🟣 豆包 · Seed 2.0 Pro")
 MESSAGE_DEDUPLICATOR = wechat_command_service.MessageDeduplicator(window_seconds=600)
 
 LOG_DIR.mkdir(parents=True, exist_ok=True)

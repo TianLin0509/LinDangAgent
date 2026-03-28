@@ -15,6 +15,7 @@ def _candidate_secret_paths() -> list[Path]:
     repo_root = Path(__file__).resolve().parent.parent
     return [
         repo_root / ".streamlit" / "secrets.toml",
+        repo_root.parent / ".streamlit" / "secrets.toml",
         repo_root.parent / "app" / ".streamlit" / "secrets.toml",
         repo_root.parent / "Stock_lite" / ".streamlit" / "secrets.toml",
     ]
