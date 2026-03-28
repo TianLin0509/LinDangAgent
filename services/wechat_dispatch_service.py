@@ -4,6 +4,8 @@ from dataclasses import dataclass
 
 from services.wechat_command_service import (
     MessageDeduplicator,
+    is_sentiment_generate_command,
+    is_sentiment_query,
     is_top10_generate_command,
     is_top10_query,
     is_top100_query,
@@ -34,6 +36,7 @@ def dispatch_text_message(
     top100_snapshot_getter,
     top100_review_summary_getter,
     top10_generation_status_getter,
+    sentiment_radar_getter=None,
 ) -> DispatchResult:
     duplicate = deduplicator.is_duplicate(msg_id, now_ts)
     kline_stock_name = parse_kline_predict_command(user_content)
@@ -85,9 +88,21 @@ def dispatch_text_message(
             action_arg=to_user,
         )
 
+    if is_sentiment_query(user_content):
+        if sentiment_radar_getter:
+            return DispatchResult(sentiment_radar_getter())
+        return DispatchResult("舆情雷达功能暂未启用。")
+
+    if is_sentiment_generate_command(user_content):
+        return DispatchResult(
+            reply_content=f"已开始生成舆情雷达，完成后会继续通知你，也可以稍后访问 {base_url}/sentiment/latest",
+            action="run_sentiment_radar_and_notify",
+            action_arg=to_user,
+        )
+
     if not is_valid_stock_input(user_content):
         return DispatchResult(
-            "请输入股票名称或代码。我支持单股分析、K线预测、Top10、Top100 和 Top100复盘，例如：贵州茅台、600519、K线预测 000001、top10。"
+            "请输入股票名称或代码。我支持单股分析、K线预测、Top10、Top100、Top100复盘和舆情雷达，例如：贵州茅台、600519、K线预测 000001、top10、舆情。"
         )
 
     stock_ok, stock_error = precheck_stock_input(user_content)

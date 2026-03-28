@@ -455,6 +455,23 @@ def run_top100_review_generation_and_notify(openid: str) -> None:
             logger.exception("send top100 review error message failed openid=%s", openid)
 
 
+def run_sentiment_radar_and_notify(openid: str) -> None:
+    logger.info("run_sentiment_radar start openid=%s", openid)
+    try:
+        from services.sentiment_radar import build_radar_summary_text, run_sentiment_radar
+
+        result = run_sentiment_radar(model_name=TOP10_DEFAULT_MODEL)
+        summary = build_radar_summary_text(result)
+        summary += f"\n\n详情：{BASE_URL}/sentiment/latest"
+        send_custom_message(openid, summary)
+    except Exception as exc:
+        logger.exception("run_sentiment_radar failed openid=%s error=%r", openid, exc)
+        try:
+            send_custom_message(openid, f"舆情雷达生成失败：{exc}")
+        except Exception:
+            logger.exception("send sentiment error message failed openid=%s", openid)
+
+
 def run_top10_generation_and_notify(openid: str) -> None:
     logger.info("run_top10_generation start openid=%s", openid)
     try:
@@ -574,6 +591,17 @@ async def wechat_message(
                 logger.exception("POST /wechat top100 review failed openid=%s msg_id=%s error=%r", to_user, msg_id, exc)
                 return f"Top100 复盘读取失败：{exc}"
 
+        def _sentiment_summary() -> str:
+            try:
+                from services.sentiment_radar import build_radar_summary_text, get_latest_radar
+                radar = get_latest_radar()
+                text = build_radar_summary_text(radar)
+                if radar:
+                    text += f"\n\n详情：{BASE_URL}/sentiment/latest"
+                return text
+            except Exception as exc:
+                return f"舆情雷达读取失败：{exc}"
+
         dispatch = wechat_dispatch_service.dispatch_text_message(
             user_content=user_content,
             msg_id=msg_id,
@@ -585,6 +613,7 @@ async def wechat_message(
             top100_snapshot_getter=_top100_summary,
             top100_review_summary_getter=_top100_review_summary,
             top10_generation_status_getter=get_top10_generation_status,
+            sentiment_radar_getter=_sentiment_summary,
         )
         if dispatch.action == "run_real_ai_analysis":
             background_tasks.add_task(run_real_ai_analysis, to_user, dispatch.action_arg)
@@ -594,6 +623,8 @@ async def wechat_message(
             background_tasks.add_task(run_top10_generation_and_notify, to_user)
         elif dispatch.action == "run_top100_review_generation_and_notify":
             background_tasks.add_task(run_top100_review_generation_and_notify, to_user)
+        elif dispatch.action == "run_sentiment_radar_and_notify":
+            background_tasks.add_task(run_sentiment_radar_and_notify, to_user)
         reply_content = dispatch.reply_content
     else:
         reply_content = f"暂不支持消息类型：{msg_type or 'unknown'}"
@@ -615,6 +646,19 @@ def get_report_page(report_id: str):
     if report is None:
         return HTMLResponse("<h1>报告不存在</h1>", status_code=404)
     return HTMLResponse(render_report_html(report["markdown_text"]))
+
+
+@app.get("/sentiment/latest")
+def get_sentiment_page():
+    logger.info("GET /sentiment/latest")
+    try:
+        from services.sentiment_radar import get_latest_radar, render_radar_html
+        radar = get_latest_radar()
+        if radar is None:
+            return HTMLResponse("<h1>暂时没有可用的舆情雷达结果</h1><p>发送"生成舆情"来生成。</p>", status_code=404)
+        return HTMLResponse(render_radar_html(radar))
+    except Exception as exc:
+        return HTMLResponse(f"<h1>舆情雷达加载失败</h1><p>{escape(str(exc))}</p>", status_code=500)
 
 
 @app.get("/top10/latest")
@@ -670,12 +714,13 @@ def get_knowledge_stats():
     """知识库状态概览。"""
     try:
         from knowledge.analyst_scorecard import load_scorecard
-        from knowledge.outcome_tracker import get_accuracy_summary
+        from knowledge.outcome_tracker import get_accuracy_summary, get_top100_accuracy
         from knowledge.regime_detector import get_current_regime
 
         return {
             "regime": get_current_regime(),
             "accuracy": get_accuracy_summary(days=90),
+            "top100_accuracy": get_top100_accuracy(days=90),
             "scorecard_summary": {
                 k: v for k, v in load_scorecard().items()
                 if k in ("sample_count", "directional_count", "overall", "last_updated")

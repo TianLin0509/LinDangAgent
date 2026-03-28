@@ -45,6 +45,8 @@ TOP10_GENERATE_COMMANDS = {
     "刷新top10",
     "更新top10",
 }
+SENTIMENT_QUERY_COMMANDS = {"舆情", "舆情雷达", "市场情绪", "市场舆情"}
+SENTIMENT_GENERATE_COMMANDS = {"生成舆情", "刷新舆情", "更新舆情"}
 KLINE_PREDICT_PREFIXES = (
     "k线预测",
     "预测k线",
@@ -109,6 +111,14 @@ def is_top100_review_query(content: str) -> bool:
 
 def is_top100_review_generate_command(content: str) -> bool:
     return _matches_cmd(content, TOP100_REVIEW_GENERATE_COMMANDS)
+
+
+def is_sentiment_query(content: str) -> bool:
+    return _matches_cmd(content, SENTIMENT_QUERY_COMMANDS)
+
+
+def is_sentiment_generate_command(content: str) -> bool:
+    return _matches_cmd(content, SENTIMENT_GENERATE_COMMANDS)
 
 
 def parse_kline_predict_command(content: str) -> str | None:
