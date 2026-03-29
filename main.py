@@ -928,5 +928,5 @@ def trigger_knowledge_update():
 
 
 if __name__ == "__main__":
-    logger.info("wechat server starting on 127.0.0.1:8000")
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    logger.info("wechat server starting on 0.0.0.0:80")
+    uvicorn.run(app, host="0.0.0.0", port=80)
