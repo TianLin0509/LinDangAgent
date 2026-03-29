@@ -9,6 +9,8 @@ import threading
 import time
 from datetime import date, datetime
 
+import pandas as pd
+
 
 logger = logging.getLogger(__name__)
 
@@ -124,6 +126,9 @@ def run_deep_top10(
         "phase": "",
         "progress": [],
         "error": None,
+        "scored_count": 0,
+        "total_count": 0,
+        "current_stock": "",
     }
     _write_status(status)
 
@@ -157,14 +162,35 @@ def run_deep_top10(
 
         status["phase"] = "生成研报"
         _write_status(status)
-        _log(f"🤖 Phase 3: 为 {len(enriched)} 只候选股生成价值投机研报...")
 
         client, cfg, err = get_ai_client(model_name)
         if err:
             raise RuntimeError(f"AI 客户端初始化失败: {err}")
 
+        # ── 断点续跑：加载已完成的增量结果 ────────────────────────────
+        from top10.scorer import load_incremental_results, clear_incremental_results
+
+        previous_results = load_incremental_results(model_name)
+        already_scored_codes = {str(r["代码"]) for r in previous_results}
+        resumed_count = len(already_scored_codes)
+
+        if already_scored_codes:
+            original_count = len(enriched)
+            enriched = enriched[~enriched["代码"].astype(str).isin(already_scored_codes)]
+            _log(f"  ♻️ 发现 {resumed_count} 只已完成的研报（断点续跑），跳过，剩余 {len(enriched)} 只待分析")
+
+        overall_total = len(enriched) + resumed_count
+        status["total_count"] = overall_total
+        status["scored_count"] = resumed_count
+        _write_status(status)
+        _log(f"🤖 Phase 3: 为 {len(enriched)} 只候选股生成价值投机研报（总计 {overall_total} 只）...")
+
         def score_progress(current, total, msg):
-            _log(f"  [{current}/{total}] {msg}")
+            status["scored_count"] = resumed_count + current
+            status["total_count"] = overall_total
+            if "→" in msg:
+                status["current_stock"] = msg.split("→")[0].replace("✅", "").replace("❌", "").strip()
+            _log(f"  [{resumed_count + current}/{overall_total}] {msg}")
 
         scored = score_all(
             client,
@@ -175,6 +201,18 @@ def run_deep_top10(
             max_workers=2,
             username=username,
         )
+
+        # ── 合并断点续跑的结果 ────────────────────────────────────────
+        if previous_results:
+            previous_df = pd.DataFrame(previous_results)
+            if not scored.empty:
+                scored = pd.concat([previous_df, scored], ignore_index=True)
+            else:
+                scored = previous_df
+            scored = scored.sort_values("综合匹配度", ascending=False).reset_index(drop=True)
+            scored.index = scored.index + 1
+            scored.index.name = "推荐排名"
+
         _log(f"  ✅ 研报生成完成，共 {len(scored)} 只")
 
         status["phase"] = "总结保存"
@@ -227,6 +265,7 @@ def run_deep_top10(
             triggered_by=username,
             tokens_used=tokens_used,
         )
+        clear_incremental_results(model_name)
 
         _log(f"✅ 全部完成！共消耗 {tokens_used:,} token")
         _log("📧 发送 Top10 报告邮件...")

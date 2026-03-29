@@ -84,6 +84,119 @@ async def health_check():
     return checks
 
 
+def _render_progress_html() -> str:
+    """Top10 实时进度页面 HTML（内嵌 JS 轮询）"""
+    return """<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Top10 生成进度</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0f1117;color:#e0e0e0;padding:20px;max-width:800px;margin:0 auto}
+h1{font-size:1.4em;margin-bottom:16px;color:#fff}
+.card{background:#1a1d27;border-radius:12px;padding:20px;margin-bottom:16px;border:1px solid #2a2d37}
+.phase{font-size:1.1em;color:#8b95a5;margin-bottom:8px}
+.current{font-size:1.3em;color:#4fc3f7;font-weight:bold;margin:8px 0}
+.bar-bg{background:#2a2d37;border-radius:8px;height:28px;overflow:hidden;margin:12px 0}
+.bar-fill{background:linear-gradient(90deg,#1976d2,#4fc3f7);height:100%;border-radius:8px;transition:width 0.5s ease;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:bold;color:#fff;min-width:40px}
+.stats{display:flex;gap:20px;font-size:0.9em;color:#8b95a5;margin:8px 0}
+.stats span{color:#fff;font-weight:bold}
+.log-box{background:#12141c;border-radius:8px;padding:12px;max-height:400px;overflow-y:auto;font-family:"Cascadia Code","Fira Code",monospace;font-size:12px;line-height:1.8;color:#a0a8b8}
+.log-box div{border-bottom:1px solid #1a1d27;padding:2px 0}
+.done{color:#66bb6a;font-size:1.2em;text-align:center;padding:20px}
+.error{color:#ef5350;font-size:1.1em;text-align:center;padding:20px}
+.idle{color:#8b95a5;text-align:center;padding:40px;font-size:1.1em}
+</style>
+</head>
+<body>
+<h1>Top10 生成进度</h1>
+<div id="content"><div class="idle">正在连接...</div></div>
+<script>
+const content = document.getElementById('content');
+let polling = true;
+
+function elapsed(started) {
+    if (!started) return '--:--:--';
+    const diff = Math.floor((Date.now() - new Date(started).getTime()) / 1000);
+    const h = String(Math.floor(diff / 3600)).padStart(2, '0');
+    const m = String(Math.floor((diff % 3600) / 60)).padStart(2, '0');
+    const s = String(diff % 60).padStart(2, '0');
+    return h + ':' + m + ':' + s;
+}
+
+function renderLog(progress) {
+    if (!progress || !progress.length) return '';
+    // 只显示 Phase 3 的打分日志（含 ✅ 或 ❌）
+    const scoreLogs = progress.filter(p => p.includes('✅') || p.includes('❌') || p.includes('Phase') || p.includes('♻'));
+    return scoreLogs.map(p => '<div>' + p.replace(/</g,'&lt;') + '</div>').join('');
+}
+
+function update(data) {
+    if (data.status === 'idle') {
+        content.innerHTML = '<div class="idle">当前没有正在运行的 Top10 任务</div>';
+        polling = false;
+        return;
+    }
+    if (data.status === 'done') {
+        const msg = data.phase === '部分完成'
+            ? '部分完成（' + (data.scored_count || '?') + ' 只）'
+            : '全部完成！';
+        content.innerHTML = '<div class="card"><div class="done">' + msg +
+            '<br><small>共耗时 ' + elapsed(data.started) +
+            ' | Token: ' + (data.tokens_used ? data.tokens_used.toLocaleString() : '?') +
+            '</small></div></div>' +
+            '<div class="card" style="text-align:center"><a href="/top10/latest" style="color:#4fc3f7;font-size:1.1em">查看 Top10 结果 →</a></div>';
+        polling = false;
+        return;
+    }
+    if (data.status === 'error') {
+        content.innerHTML = '<div class="card"><div class="error">生成失败<br><small>' +
+            (data.error || '未知错误').substring(0, 200) + '</small></div></div>';
+        polling = false;
+        return;
+    }
+    // running
+    const scored = data.scored_count || 0;
+    const total = data.total_count || 100;
+    const pct = total > 0 ? Math.round(scored / total * 100) : 0;
+    const phase = data.phase || '初始化';
+    const stock = data.current_stock || '';
+
+    let html = '<div class="card">';
+    html += '<div class="phase">阶段: ' + phase + '</div>';
+    if (stock) html += '<div class="current">正在分析: ' + stock + '</div>';
+    html += '<div class="bar-bg"><div class="bar-fill" style="width:' + Math.max(pct, 2) + '%">' + scored + '/' + total + ' (' + pct + '%)</div></div>';
+    html += '<div class="stats">已用时间: <span>' + elapsed(data.started) + '</span> | 模型: <span>' + (data.model || '?') + '</span></div>';
+    html += '</div>';
+
+    html += '<div class="card"><div class="log-box" id="logbox">' + renderLog(data.progress) + '</div></div>';
+    content.innerHTML = html;
+
+    // 自动滚动到底部
+    const box = document.getElementById('logbox');
+    if (box) box.scrollTop = box.scrollHeight;
+}
+
+async function poll() {
+    if (!polling) return;
+    try {
+        const resp = await fetch('/api/top10/progress');
+        const data = await resp.json();
+        update(data);
+    } catch (e) {
+        content.innerHTML = '<div class="idle">连接失败，3秒后重试...</div>';
+    }
+    if (polling) setTimeout(poll, 3000);
+}
+
+poll();
+</script>
+</body>
+</html>"""
+
+
 def _fmt_money(value: object) -> str:
     return rank_service.format_money(value)
 
@@ -715,6 +828,22 @@ def get_sentiment_page():
         return HTMLResponse(render_radar_html(radar))
     except Exception as exc:
         return HTMLResponse(f"<h1>舆情雷达加载失败</h1><p>{escape(str(exc))}</p>", status_code=500)
+
+
+@app.get("/api/top10/progress")
+def api_top10_progress():
+    """Top10 生成进度 JSON — 供前端轮询"""
+    status = get_top10_generation_status()
+    if status is None:
+        return {"status": "idle", "message": "No active or recent task"}
+    return status
+
+
+@app.get("/top10/progress")
+def get_top10_progress_page():
+    """Top10 实时进度页面"""
+    logger.info("GET /top10/progress")
+    return HTMLResponse(_render_progress_html())
 
 
 @app.get("/top10/latest")

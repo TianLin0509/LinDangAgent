@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+import json
+import logging
+import os
 import re
+import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import date
 
 import numpy as np
 import pandas as pd
@@ -14,6 +19,60 @@ from core.tushare_client import price_summary, to_ts_code
 from top10.report_context import build_report_context
 from top10.report_prompts import REPORT_SYSTEM, build_report_prompt
 from top10.report_storage import save_top10_report
+
+logger = logging.getLogger(__name__)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 增量保存 — 每完成一只股票立即持久化，支持断点续跑
+# ══════════════════════════════════════════════════════════════════════════════
+
+_incremental_lock = threading.Lock()
+_CACHE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "cache")
+
+
+def _incremental_path(model_name: str) -> str:
+    return os.path.join(_CACHE_DIR, f"{date.today().isoformat()}_{model_name}_incremental.json")
+
+
+def save_incremental_result(result: dict, model_name: str):
+    """追加一只股票的结果到增量文件。线程安全。"""
+    path = _incremental_path(model_name)
+    with _incremental_lock:
+        existing = []
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    existing = json.load(f)
+            except (json.JSONDecodeError, Exception):
+                existing = []
+        existing.append(result)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(existing, f, ensure_ascii=False, indent=2, default=str)
+
+
+def load_incremental_results(model_name: str) -> list[dict]:
+    """加载当日已保存的增量结果。"""
+    path = _incremental_path(model_name)
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        logger.info("[scorer] loaded %d incremental results from %s", len(data), path)
+        return data
+    except Exception:
+        return []
+
+
+def clear_incremental_results(model_name: str):
+    """全部完成后删除增量文件。"""
+    path = _incremental_path(model_name)
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+            logger.info("[scorer] cleared incremental file: %s", path)
+    except Exception:
+        pass
 
 
 def _cleanup_report_text(text: str) -> str:
@@ -287,6 +346,7 @@ def score_all(
             try:
                 result = future.result()
                 results.append(result)
+                save_incremental_result(result, model_name)
                 if progress_callback:
                     progress_callback(
                         completed_count,
