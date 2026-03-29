@@ -312,3 +312,179 @@ def get_stock_history(stock_code: str) -> list[dict]:
     """返回特定股票的历史分析结果。"""
     outcomes = load_outcomes()
     return [o for o in outcomes if o.get("stock_code") == stock_code]
+
+
+# ── Top100 推荐结果追踪 ──────────────────────────────────────────
+
+TOP10_CACHE_DIR = BASE_DIR / "Stock_top10" / "cache"
+
+
+def evaluate_top100_pending(min_days: int = 8) -> int:
+    """评估 Top100 推荐列表中超过 min_days 天的股票。返回新评估数量。"""
+    from data.tushare_client import get_price_df
+
+    _load_evaluated_ids()
+
+    if not TOP10_CACHE_DIR.exists():
+        logger.info("[outcome_tracker] top10 cache dir not found, skip")
+        return 0
+
+    cutoff_date = (datetime.now() - timedelta(days=min_days)).strftime("%Y-%m-%d")
+    evaluated = 0
+
+    # 扫描所有 Top100 结果文件
+    for result_file in sorted(TOP10_CACHE_DIR.glob("*.json")):
+        if "deep_status" in result_file.name.lower():
+            continue
+
+        try:
+            data = json.loads(result_file.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+
+        results = data.get("results", [])
+        if not results:
+            continue
+
+        # 从文件名提取日期（格式: 2026-03-19_模型名.json）
+        file_date = result_file.stem[:10]  # "2026-03-19"
+        if file_date > cutoff_date:
+            continue  # 还不够 min_days 天
+
+        model_name = data.get("model", "")
+
+        for rank, stock in enumerate(results[:100], start=1):
+            stock_code_raw = str(stock.get("代码", ""))
+            stock_name = str(stock.get("股票名称", ""))
+            if not stock_code_raw:
+                continue
+
+            # 构造唯一 ID: top100_{日期}_{股票代码}
+            ts_code = _normalize_top100_code(stock_code_raw)
+            unique_id = f"top100_{file_date}_{ts_code}"
+            if unique_id in _evaluated_ids:
+                continue
+
+            # 提取评分
+            match_score = stock.get("综合匹配度", 0)
+            try:
+                match_score = float(match_score)
+            except (ValueError, TypeError):
+                match_score = 0
+
+            # 综合匹配度是 0-100 制，转为 0-10 方便统一
+            weighted_10 = round(match_score / 10, 1)
+            direction = "bullish" if match_score >= 60 else ("neutral" if match_score >= 40 else "bearish")
+            short_term = str(stock.get("短线建议", ""))
+
+            # 提取子维度评分（0-10 制）
+            sub_scores = {}
+            for key in ["基本面", "题材热度", "技术面"]:
+                val = stock.get(key)
+                if val is not None:
+                    try:
+                        sub_scores[key] = float(val)
+                    except (ValueError, TypeError):
+                        pass
+
+            # 获取最新价作为基准
+            close_at_report = None
+            try:
+                close_at_report = float(stock.get("最新价", 0))
+            except (ValueError, TypeError):
+                pass
+
+            # 拉取后续行情
+            try:
+                report_date = datetime.strptime(file_date, "%Y-%m-%d")
+                price_df, err = get_price_df(ts_code)
+                if err or price_df is None or price_df.empty:
+                    continue
+            except Exception:
+                continue
+
+            returns = _calc_returns(price_df, report_date, close_at_report)
+            if returns is None:
+                continue
+
+            is_bullish = direction == "bullish"
+            outcome = {
+                "report_id": unique_id,
+                "report_date": file_date,
+                "stock_code": ts_code,
+                "stock_name": stock_name,
+                "source": "top100",
+                "rank": rank,
+                "scores": sub_scores,
+                "weighted_score": weighted_10,
+                "match_score_100": match_score,
+                "short_term_advice": short_term,
+                "direction": direction,
+                "close_at_report": returns["close_at_report"],
+                "return_5d": returns["return_5d"],
+                "return_10d": returns["return_10d"],
+                "return_20d": returns["return_20d"],
+                "hit_5d": (returns["return_5d"] > 0) == is_bullish if direction != "neutral" else None,
+                "hit_10d": (returns["return_10d"] > 0) == is_bullish if direction != "neutral" else None,
+                "hit_20d": (returns["return_20d"] > 0) == is_bullish if direction != "neutral" else None,
+                "model": model_name,
+                "evaluated_at": datetime.now().isoformat(timespec="seconds"),
+            }
+
+            _append_outcome(outcome)
+            _evaluated_ids.add(unique_id)
+            evaluated += 1
+
+        if evaluated > 0:
+            logger.info(
+                "[outcome_tracker] evaluated %d top100 stocks from %s",
+                evaluated, file_date,
+            )
+
+    return evaluated
+
+
+def _normalize_top100_code(code: str) -> str:
+    """将 Top100 中的股票代码标准化为 Tushare 格式。"""
+    code = code.strip().upper()
+    if "." in code:
+        return code
+    if code.startswith("6"):
+        return f"{code}.SH"
+    if code.startswith(("4", "8")):
+        return f"{code}.BJ"
+    return f"{code}.SZ"
+
+
+def get_top100_accuracy(days: int = 90) -> dict:
+    """返回 Top100 推荐的准确率统计（按排名段分）。"""
+    outcomes = [o for o in load_outcomes(days=days) if o.get("source") == "top100"]
+    if not outcomes:
+        return {"sample_count": 0}
+
+    directional = [o for o in outcomes if o.get("direction") != "neutral"]
+    total = len(directional)
+
+    # 按排名段分
+    top10 = [o for o in directional if o.get("rank", 999) <= 10]
+    top30 = [o for o in directional if o.get("rank", 999) <= 30]
+    top100 = directional
+
+    def _bucket_stats(group: list) -> dict:
+        n = len(group)
+        if not n:
+            return {"total": 0}
+        return {
+            "total": n,
+            "hit_rate_5d": round(sum(1 for o in group if o.get("hit_5d")) / n * 100, 1),
+            "hit_rate_10d": round(sum(1 for o in group if o.get("hit_10d")) / n * 100, 1),
+            "avg_return_5d": round(sum(o.get("return_5d", 0) for o in group) / n, 2),
+            "avg_return_10d": round(sum(o.get("return_10d", 0) for o in group) / n, 2),
+        }
+
+    return {
+        "sample_count": len(outcomes),
+        "top10": _bucket_stats(top10),
+        "top30": _bucket_stats(top30),
+        "top100": _bucket_stats(top100),
+    }

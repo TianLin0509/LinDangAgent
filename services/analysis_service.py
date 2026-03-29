@@ -47,6 +47,7 @@ class GeneratedReportBundle:
     summary: str
     full_report: str
     combined_markdown: str
+    scores: dict | None = None
 
 
 def _cleanup_report_text(text: str) -> str:
@@ -388,6 +389,7 @@ def generate_report_bundle(
         summary=result.summary or SUMMARY_FALLBACK_TEXT,
         full_report=result.full_report,
         combined_markdown="\n\n".join(parts).strip(),
+        scores=result.scores,
     )
 
 

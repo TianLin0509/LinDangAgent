@@ -248,16 +248,71 @@ def send_custom_message(openid: str, content: str) -> list[dict]:
     return results
 
 
-def extract_template_fields(summary_text: str, report_text: str) -> tuple[str, str, str]:
+def extract_template_fields(
+    summary_text: str,
+    report_text: str,
+    scores: dict | None = None,
+) -> tuple[str, str, str]:
     text = "\n".join(filter(None, [summary_text, report_text]))
 
-    score_match = re.search(r"(评分|综合评分|匹配度)[:：]\s*([^\n]{1,30})", text, re.IGNORECASE)
-    theme_match = re.search(r"(主题|核心逻辑|投资主线)[:：]\s*([^\n]{1,50})", text, re.IGNORECASE)
-    tactics_match = re.search(r"(策略|建议|操作建议)[:：]\s*([^\n]{1,50})", text, re.IGNORECASE)
+    # --- 模式匹配度 (score) ---
+    score_val = "见完整报告"
+    # 1) 优先从 parsed scores dict（代码计算的加权分，最可靠）
+    if scores and "综合加权" in scores:
+        composite = scores["综合加权"]
+        rating = scores.get("_rating", "")
+        score_val = f"{composite}分·{rating}" if rating else f"{composite}分"
+    else:
+        # 2) 从摘要中匹配 "X.X分(高匹配)" / "X分（中匹配）" 等
+        m = re.search(r"(\d+(?:\.\d+)?)\s*分\s*[（(]\s*(高匹配|中匹配|低匹配|坚决规避)\s*[）)]", text)
+        if m:
+            score_val = f"{m.group(1)}分·{m.group(2)}"
+        else:
+            # 3) 宽松匹配 "综合XX分" / "评分XX分"
+            m2 = re.search(r"(?:综合|评分|匹配度|得分)\s*[:：]?\s*(\d+(?:\.\d+)?)\s*分", text)
+            if m2:
+                score_val = f"{m2.group(1)}分"
 
-    score_val = score_match.group(2).strip() if score_match else "见完整报告"
-    theme_val = theme_match.group(2).strip() if theme_match else "见完整报告"
-    tactics_val = tactics_match.group(2).strip() if tactics_match else "见完整报告"
+    # --- 核心风口 (theme) ---
+    theme_val = "见完整报告"
+    # 1) 摘要中 "核心炒作题材为XXX"
+    m = re.search(r"核心(?:炒作)?题材(?:为|是|：|:)\s*[「""]?(.+?)[」""]?(?:[，,。;；]|$)", text)
+    if m:
+        theme_val = m.group(1).strip()[:40]
+    else:
+        # 2) 报告正文 "核心炒作题材定性" 章节下提取
+        m2 = re.search(
+            r"核心炒作题材定性[：:】]*\s*(?:\*{0,2})\s*(.+?)(?:\n|。|；)",
+            text,
+        )
+        if m2:
+            theme_val = re.sub(r"^[（(【*\s]+", "", m2.group(1)).strip()[:40]
+        else:
+            # 3) 宽松匹配各种"题材/概念/主线"表述
+            m3 = re.search(r"(?:题材|概念|主线|风口|赛道)(?:为|是|：|:)\s*[「""]?(.+?)[」""]?(?:[，,。;；\n]|$)", text)
+            if m3:
+                theme_val = m3.group(1).strip()[:40]
+
+    # --- 介入战术 (tactics) ---
+    tactics_val = "见完整报告"
+    # 1) 摘要中 "最优介入战术为XXX"
+    m = re.search(r"(?:最优)?介入战术(?:为|是|：|:)\s*[「""]?(.+?)[」""]?(?:[，,。;；]|$)", text)
+    if m:
+        tactics_val = m.group(1).strip()[:40]
+    else:
+        # 2) 报告正文 "最优介入战术" 章节
+        m2 = re.search(
+            r"最优介入战术[：:】]*\s*(?:\*{0,2})\s*(.+?)(?:\n|。|；)",
+            text,
+        )
+        if m2:
+            tactics_val = re.sub(r"^[（(【*\s]+", "", m2.group(1)).strip()[:40]
+        else:
+            # 3) 宽松匹配 "操作建议/策略/建议"
+            m3 = re.search(r"(?:操作评级|操作建议|介入|策略)[：:]\s*[「""]?(.+?)[」""]?(?:[，,。;；\n]|$)", text)
+            if m3:
+                tactics_val = m3.group(1).strip()[:40]
+
     return score_val, theme_val, tactics_val
 
 
@@ -358,6 +413,7 @@ def run_real_ai_analysis(openid: str, stock_name: str) -> None:
         score_val, theme_val, tactics_val = extract_template_fields(
             summary_text=abstract_text,
             report_text=bundle.combined_markdown,
+            scores=bundle.scores,
         )
         template_result = send_template_message(
             openid=openid,

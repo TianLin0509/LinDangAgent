@@ -22,15 +22,25 @@ def run_knowledge_update():
     logger.info("[knowledge_scheduler] starting daily update")
     results = {}
 
-    # 1. 评估 outcome
+    # 1a. 评估单股报告 outcome
     try:
         from knowledge.outcome_tracker import evaluate_pending
         n = evaluate_pending()
         results["outcomes_evaluated"] = n
-        logger.info("[knowledge_scheduler] outcomes evaluated: %d", n)
+        logger.info("[knowledge_scheduler] report outcomes evaluated: %d", n)
     except Exception as exc:
         logger.exception("[knowledge_scheduler] outcome_tracker failed: %r", exc)
         results["outcomes_error"] = str(exc)
+
+    # 1b. 评估 Top100 推荐 outcome
+    try:
+        from knowledge.outcome_tracker import evaluate_top100_pending
+        n100 = evaluate_top100_pending()
+        results["top100_outcomes_evaluated"] = n100
+        logger.info("[knowledge_scheduler] top100 outcomes evaluated: %d", n100)
+    except Exception as exc:
+        logger.exception("[knowledge_scheduler] top100 outcome_tracker failed: %r", exc)
+        results["top100_outcomes_error"] = str(exc)
 
     # 2. 检测 regime
     try:

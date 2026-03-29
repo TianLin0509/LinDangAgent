@@ -98,7 +98,24 @@ def build_knowledge_context(
         except Exception as exc:
             logger.debug("[injector] stock history error: %r", exc)
 
-    # 5. 模型表现
+    # 5. Top100 推荐表现
+    try:
+        from knowledge.outcome_tracker import get_top100_accuracy
+        t100 = get_top100_accuracy(days=90)
+        if t100.get("sample_count", 0) >= 10:
+            top10_stats = t100.get("top10", {})
+            top100_stats = t100.get("top100", {})
+            parts = ["▸ Top100选股绩效："]
+            if top10_stats.get("total", 0) >= 3:
+                parts.append(f"Top10推荐5日胜率{top10_stats['hit_rate_5d']:.0f}%")
+            if top100_stats.get("total", 0) >= 10:
+                parts.append(f"全榜平均5日收益{top100_stats['avg_return_5d']:+.1f}%")
+            if len(parts) > 1:
+                sections.append("，".join(parts))
+    except Exception as exc:
+        logger.debug("[injector] top100 error: %r", exc)
+
+    # 6. 模型表现
     if model_name:
         try:
             from knowledge.analyst_scorecard import load_scorecard
