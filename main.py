@@ -711,7 +711,7 @@ def get_sentiment_page():
         from services.sentiment_radar import get_latest_radar, render_radar_html
         radar = get_latest_radar()
         if radar is None:
-            return HTMLResponse("<h1>暂时没有可用的舆情雷达结果</h1><p>发送"生成舆情"来生成。</p>", status_code=404)
+            return HTMLResponse('<h1>暂时没有可用的舆情雷达结果</h1><p>发送"生成舆情"来生成。</p>', status_code=404)
         return HTMLResponse(render_radar_html(radar))
     except Exception as exc:
         return HTMLResponse(f"<h1>舆情雷达加载失败</h1><p>{escape(str(exc))}</p>", status_code=500)
