@@ -84,6 +84,8 @@ def parse_scores(text: str) -> dict | None:
 
     for line in block.strip().splitlines():
         line = line.strip()
+        # 清除 markdown 粗体/斜体标记（Codex 等模型常用）
+        line = re.sub(r"\*+", "", line)
         if not line or line == "---":
             continue
         # 解析三种格式：

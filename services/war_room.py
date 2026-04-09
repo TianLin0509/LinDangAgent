@@ -213,8 +213,23 @@ def _parse_general_report(text: str) -> dict:
 
     result_scores = scores or {}
     if not scores:
-        result_scores["_parse_failed"] = True
-        logger.warning("[war_room] 将领评分解析失败，标记 _parse_failed")
+        # Fallback: 从文本中提取总分（如 "评分：8.6/10" 或 "综合评分 86"）
+        total_match = re.search(r"(?:评分|打分|得分|总分)[：:]\s*\**(\d+(?:\.\d+)?)\s*(?:分)?\s*(?:/\s*(100|10))?\**", text)
+        if total_match:
+            val = float(total_match.group(1))
+            scale = total_match.group(2)
+            if scale == "10" or (scale is None and val <= 10):
+                val = val * 10
+            val = max(0.0, min(100.0, val))
+            result_scores = {"基本面": val, "预期差": val, "资金面": val, "技术面": val}
+            from services.analysis_service import SCORE_WEIGHTS
+            weighted = sum(val * w for w in SCORE_WEIGHTS.values()) / sum(SCORE_WEIGHTS.values())
+            result_scores["综合加权"] = round(weighted, 1)
+            result_scores["_from_total"] = True
+            logger.info("[war_room] 将领评分从总分推算: %.1f → 四维均分 %.1f", val, weighted)
+        else:
+            result_scores["_parse_failed"] = True
+            logger.warning("[war_room] 将领评分解析失败，标记 _parse_failed")
 
     return {
         "report_text": text,
@@ -465,9 +480,16 @@ def run_war_room(
                         han_veto_reason = han_text
                         logger.info("[war_room] Phase 1.5: 韩先楚一票否决！置信度 %d%%", confidence)
                 elif "<<<VETO>>>" in han_text:
-                    han_veto = True
-                    han_veto_reason = han_text
-                    logger.info("[war_room] Phase 1.5: 韩先楚一票否决（<<<VETO>>>标记）")
+                    # <<<VETO>>> 裸标记也要验证：检查是否有明确的否决陈述
+                    # 避免模型把标记当格式示例输出而误触否决
+                    veto_keywords = ["否决", "一票否决", "致命", "重大风险", "全线撤退"]
+                    has_veto_intent = any(kw in han_text[:500] for kw in veto_keywords)
+                    if has_veto_intent:
+                        han_veto = True
+                        han_veto_reason = han_text
+                        logger.info("[war_room] Phase 1.5: 韩先楚一票否决（<<<VETO>>>标记+否决意图确认）")
+                    else:
+                        logger.info("[war_room] Phase 1.5: 韩先楚输出含<<<VETO>>>但无明确否决意图，忽略")
 
                 # 韩先楚的反驳注入将领报告（无论是否否决）
                 if len(general_reports) > 1:
