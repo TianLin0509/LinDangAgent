@@ -239,6 +239,40 @@ def _parse_general_report(text: str) -> dict:
     }
 
 
+_SCORE_DIMS = ["基本面", "预期差", "资金面", "技术面"]
+
+
+def _is_score_broken(scores: dict) -> bool:
+    """评分是否缺失或异常：完全失败、综合加权缺失、或多维度为0（解析不全）"""
+    if not scores or scores.get("_parse_failed") or scores.get("综合加权") is None:
+        return True
+    zero_count = sum(1 for d in _SCORE_DIMS if scores.get(d, 0) == 0)
+    return zero_count >= 3
+
+
+def _build_score_extraction_prompt(report_text: str) -> str:
+    """构建评分提取专用 prompt：从已完成的报告中提取/推断分数"""
+    truncated = report_text[:4000]
+    return f"""以下是一位分析师的完整报告，请从中提取或推断四维评分。
+
+报告内容：
+{truncated}
+
+请严格按以下格式输出（仅输出此块，不要其他内容）：
+
+<<<SCORES>>>
+基本面: X/100
+预期差: X/100
+资金面: X/100
+技术面: X/100
+---
+机会吸引力: X/100
+逻辑置信度: X/100
+立场: 推进/观察/否决
+<<<END_SCORES>>>
+"""
+
+
 def _build_scores_table(general_reports: list) -> str:
     """构建三将领评分对比表"""
     dims = ["基本面", "预期差", "资金面", "技术面", "综合加权"]
@@ -416,12 +450,29 @@ def run_war_room(
         text = _call_single_model(stdin_prompt, full_system, model)
         parsed = _parse_general_report(text)
 
-        # ★ Claude兜底：将领输出为错误/无评分时，自动用Claude Sonnet重试
-        if not parsed["scores"] or "⚠️" in text[:20]:
-            logger.warning("[war_room] 将领%s（%s）失败，Claude Sonnet 兜底...",
+        # ★ 三级重试：确保评分不缺失
+        # 第1级：原模型输出 → 解析
+        if _is_score_broken(parsed["scores"]) or "⚠️" in text[:20]:
+            # 第2级：Claude Sonnet 兜底（同 prompt）
+            logger.warning("[war_room] 将领%s（%s）评分缺失，Claude Sonnet 兜底...",
                            chr(65 + i), model)
             text = _call_single_model(stdin_prompt, full_system, CLAUDE_FALLBACK)
             parsed = _parse_general_report(text)
+
+        if _is_score_broken(parsed["scores"]):
+            # 第3级：评分提取专用 prompt（从报告原文推断分数）
+            logger.warning("[war_room] 将领%s 二次评分缺失，发送评分提取请求...", chr(65 + i))
+            from services.analysis_service import parse_scores
+            score_text = _call_single_model(
+                _build_score_extraction_prompt(text),
+                "你是评分提取助手。从分析报告中提取四维评分，严格按格式输出。",
+                CLAUDE_FALLBACK,
+            )
+            extracted = parse_scores(score_text)
+            if extracted and not _is_score_broken(extracted):
+                parsed["scores"] = extracted
+                parsed["scores"]["_extracted_retry"] = True
+                logger.info("[war_room] 将领%s 评分提取成功: %s", chr(65 + i), extracted.get("综合加权"))
 
         score_str = parsed["scores"].get("综合加权", "?")
         logger.info("[war_room] 将领%s 完成，综合分: %s", chr(65 + i), score_str)
@@ -438,17 +489,7 @@ def run_war_room(
             for fut in futures:
                 general_reports.append(fut.result())
 
-    # ── Phase 1 审查：将领评分缺失/异常则替补保护 ────────────────
-    _dims = ["基本面", "预期差", "资金面", "技术面"]
-
-    def _is_score_broken(scores: dict) -> bool:
-        """评分是否缺失或异常：完全失败、综合加权缺失、或多维度为0（解析不全）"""
-        if not scores or scores.get("_parse_failed") or scores.get("综合加权") is None:
-            return True
-        # 3个及以上维度=0 视为解析缺失（真实评分不会出现多维度恰好为0）
-        zero_count = sum(1 for d in _dims if scores.get(d, 0) == 0)
-        return zero_count >= 3
-
+    # ── Phase 1 审查：将领评分缺失/异常则替补保护（最后防线）────────
     valid_scores = [g["scores"].get("综合加权") for g in general_reports
                     if g["scores"] and not _is_score_broken(g["scores"])]
     for i, g in enumerate(general_reports):

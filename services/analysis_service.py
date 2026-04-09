@@ -84,15 +84,18 @@ def parse_scores(text: str) -> dict | None:
 
     for line in block.strip().splitlines():
         line = line.strip()
-        # 清除 markdown 粗体/斜体标记（Codex 等模型常用）
-        line = re.sub(r"\*+", "", line)
+        # 清除 markdown 格式标记（粗体/斜体/代码/列表符号）
+        line = re.sub(r"^[\s\-\*>]+", "", line)  # 列表标记
+        line = re.sub(r"\*+", "", line)            # 粗体/斜体
+        line = re.sub(r"`+", "", line)             # 代码格式
         if not line or line == "---":
             continue
-        # 解析三种格式：
+        # 解析评分格式（兼容档位前缀 "B档 → 72/100"）：
         # "基本面: 75/100"（标准百分制）
+        # "基本面: B档 → 75/100"（档位+映射）
         # "基本面: 7/10"（旧10分制）
         # "基本面: 75"（纯数字，视为百分制）
-        parsed = re.match(r"(.+?)[:：]\s*(-?\d+(?:\.\d+)?)\s*(?:分)?\s*(?:/\s*(100|10))?$", line)
+        parsed = re.match(r"(.+?)[:：]\s*(?:[A-ES]档\s*[→→]?\s*)?(-?\d+(?:\.\d+)?)\s*(?:分)?\s*(?:/\s*(100|10))?$", line)
         if parsed:
             key = parsed.group(1).strip()
             val = float(parsed.group(2))

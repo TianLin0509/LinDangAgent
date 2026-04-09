@@ -498,37 +498,37 @@ def build_war_room_prompts(
 {sentiment_block}
 """
 
-    # ── 专长B：韩先楚（侦察：基本面+财务+风险）~3500字 ──────────
+    # ── 专长B：韩先楚（侦察：基本面+财务+风险）── 控制在 ~5500 字 ──
     detail_b = f"""
 以下是你的专长维度详情数据（基本面+财务+风险排查）：
 
 【利润表】
-{smart_truncate(context.get("income", "暂无"), 1800)}
+{smart_truncate(context.get("income", "暂无"), 1200)}
 
 【资产负债表】
-{smart_truncate(context.get("balance", "暂无"), 1500)}
+{smart_truncate(context.get("balance", "暂无"), 1000)}
 
 【现金流量表】
-{smart_truncate(context.get("cashflow", "暂无"), 1200)}
+{smart_truncate(context.get("cashflow", "暂无"), 800)}
 
 【核心财务指标】
-{smart_truncate(context.get("fina_indicator", "暂无"), 1800)}
+{smart_truncate(context.get("fina_indicator", "暂无"), 1200)}
 
 【审计意见】
-{smart_truncate(context.get("audit", "暂无"), 500)}
+{smart_truncate(context.get("audit", "暂无"), 400)}
 
 【业绩预告/快报】
-{smart_truncate(context.get("forecast", "暂无"), 600)}
-{smart_truncate(context.get("express", "暂无"), 600)}
+{smart_truncate(context.get("forecast", "暂无"), 400)}
+{smart_truncate(context.get("express", "暂无"), 400)}
 
 【财报披露日期】
-{smart_truncate(context.get("disclosure", "暂无"), 500)}
+{smart_truncate(context.get("disclosure", "暂无"), 300)}
 
-【券商研报（近1年，东方财富+Tushare双源采集）】
-{context.get("research_reports", "暂无") or "暂无（akshare采集失败）"}
+【券商研报（近1年）】
+{smart_truncate(context.get("research_reports", "暂无") or "暂无", 800)}
 
-【分析师一致预期（Tushare卖方研报）】
-{context.get("analyst_consensus", "暂无") or "暂无（Tushare采集失败）"}
+【分析师一致预期】
+{smart_truncate(context.get("analyst_consensus", "暂无") or "暂无", 800)}
 """
 
     # ── 专长C：邓华（全局：板块+股东+外围）~2500字 ──────────────
@@ -569,9 +569,30 @@ def build_war_room_prompts(
 """
 
     # ── 将领专属输出格式（每人只写专长章节 + 评分）──────────────
-    # 共用的评分格式和锚定标准（v3.0：先分档再映射+双轴输出）
-    scoring_format = f"""
+    # ★ SCORES 格式前置（最高优先级，放在每个 output 模板开头）
+    scores_header = """
+# ⚠️ 机器解析格式（最高优先级 — 缺少则报告作废）
 
+你的报告必须以下面的格式块结尾，逐字输出，不得省略、改写、加粗或加项目符号：
+
+<<<SCORES>>>
+基本面: X/100
+预期差: X/100
+资金面: X/100
+技术面: X/100
+---
+机会吸引力: X/100
+逻辑置信度: X/100
+立场: 推进/观察/否决
+<<<END_SCORES>>>
+
+<<<REPORT_END>>>
+# 战役总结
+（80-120字纯文本，含"XX分(评级)"和核心判断）
+"""
+
+    # 评分准则（放在 output 模板末尾）
+    scoring_rules = f"""
 # ═══ 通用要求 ═══
 
 1. 你只写自己负责的模块，非负责模块仅一句话点评，禁止越权展开分析
@@ -606,44 +627,30 @@ def build_war_room_prompts(
 >85分必须单独写"破格高分理由"段落，否则上限84
 
 ## 四维评分（每项先写档位再映射分数+一句话理由）：
-- **基本面**：X档 → X/100 -- 理由
-- **预期差与催化**：X档 → X/100 -- 理由
-- **资金面与板块身位**：X档 → X/100 -- 理由
-- **技术面与位置**：X档 → X/100 -- 理由
+- 基本面：X档 → X/100 -- 理由
+- 预期差与催化：X档 → X/100 -- 理由
+- 资金面与板块身位：X档 → X/100 -- 理由
+- 技术面与位置：X档 → X/100 -- 理由
 
 ## 双轴输出（必须同时给出）
 - 机会吸引力(0-100)：该股的赔率和进攻价值
 - 逻辑置信度(0-100)：证据链的硬度和完整性
 
 ## 五项必输出
-- **最强做多理由**：（≤30字）
-- **最强不做理由**：（≤30字）
-- **置信度**：X/100
-- **立场**：推进 / 观察 / 否决
-
-【机器解析尾块 — 必须逐字输出，不得省略、改写、加粗或加项目符号】
-<<<SCORES>>>
-基本面: X/100
-预期差: X/100
-资金面: X/100
-技术面: X/100
----
-机会吸引力: X/100
-逻辑置信度: X/100
-立场: 推进/观察/否决
-<<<END_SCORES>>>
-（上述尾块是程序解析的唯一入口，缺少则报告作废，请务必完整输出）
-
-<<<REPORT_END>>>
-# 战役总结
-（80-120字纯文本，含"XX分(评级)"和核心判断）
+- 最强做多理由：（≤30字）
+- 最强不做理由：（≤30字）
+- 置信度：X/100
+- 立场：推进 / 观察 / 否决
 
 【追加侦察需求】
 若需要补充情报列出编号列表，否则写"无"。
+
+【再次提醒】报告结尾必须包含 <<<SCORES>>> 和 <<<END_SCORES>>> 机器解析块，格式见报告开头。
 """
 
     # ═══ 将领A · 黄永胜 · 进攻与预期差官 ═══
-    output_a = f"""请只输出以下章节（你的专长维度），非负责模块仅一句话点评：
+    output_a = f"""{scores_header}
+请只输出以下章节（你的专长维度），非负责模块仅一句话点评：
 
 # 【{name}】将领A·黄永胜·进攻与预期差官
 
@@ -673,10 +680,11 @@ def build_war_room_prompts(
 * 基本面：
 * 技术面：
 
-{scoring_format}"""
+{scoring_rules}"""
 
     # ═══ 将领B · 韩先楚 · 风控与排雷官 ═══
-    output_b = f"""请只输出以下章节（你的专长维度），非负责模块仅一句话点评：
+    output_b = f"""{scores_header}
+请只输出以下章节（你的专长维度），非负责模块仅一句话点评：
 
 # 【{name}】将领B·韩先楚·风控与排雷官
 
@@ -724,10 +732,11 @@ def build_war_room_prompts(
 * 资金面：
 * 技术面：
 
-{scoring_format}"""
+{scoring_rules}"""
 
     # ═══ 将领C · 邓华 · 全局与位置官 ═══
-    output_c = f"""请只输出以下章节（你的专长维度），非负责模块仅一句话点评：
+    output_c = f"""{scores_header}
+请只输出以下章节（你的专长维度），非负责模块仅一句话点评：
 
 # 【{name}】将领C·邓华·全局与位置官
 
@@ -768,7 +777,7 @@ def build_war_room_prompts(
 * 基本面：
 * 预期差：
 
-{scoring_format}"""
+{scoring_rules}"""
 
     output_formats = [output_a, output_b, output_c]
 
