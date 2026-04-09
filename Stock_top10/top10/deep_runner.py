@@ -272,33 +272,39 @@ def run_deep_top10(
         status["scored_count"] = resumed_count
         _write_status(status)
         # ── Phase 2.5: 侦察兵快速评估 → Top 20 进深度 ────────────────
-        # ★ Scout 用 Claude Sonnet（可靠+免费），不跟随主模型
+        # ★ Scout 用 Gemini CLI（免费+快+无并发限制），Claude 留给深度分析
         from Stock_top10.top10.scorer import scout_all
 
-        _log(f"🔍 Phase 2.5: 侦察兵快速评估 {len(enriched)} 只候选股（Claude Sonnet）...")
+        _log(f"🔍 Phase 2.5: 侦察兵快速评估 {len(enriched)} 只候选股...")
         status["phase"] = "scouting"
         _write_status(status)
 
         scout_client, scout_cfg = client, cfg
-        try:
-            from ai.client import get_ai_client
-            _sc, _scfg, _serr = get_ai_client("⚡ Claude Sonnet（MAX）")
-            if _scfg:
-                scout_client, scout_cfg = _sc, _scfg
-                _log("  侦察兵模型: Claude Sonnet（MAX）")
-            else:
-                _log(f"  Claude Sonnet 不可用（{_serr}），回退到 {model_name}")
-        except Exception as e:
-            _log(f"  Claude Sonnet 初始化失败（{e}），回退到 {model_name}")
+        # 优先 Gemini CLI（免费、快、无并发限制），回退到主模型
+        _scout_model_order = ["🔮 Gemini CLI（免费）", "🟡 豆包 · Seed 2.0 Lite"]
+        for _sm in _scout_model_order:
+            try:
+                from ai.client import get_ai_client
+                _sc, _scfg, _serr = get_ai_client(_sm)
+                if _scfg:
+                    scout_client, scout_cfg = _sc, _scfg
+                    _log(f"  侦察兵模型: {_sm}")
+                    break
+            except Exception:
+                continue
+        else:
+            _log(f"  侦察兵回退到主模型: {model_name}")
 
         def scout_progress(current, total, msg):
             status["current_stock"] = msg.split("→")[0].replace("🔍", "").replace("❌", "").strip() if "→" in msg else ""
             _log(f"  [侦察 {current}/{total}] {msg}")
 
+        # CLI 模型用 max_workers=1 避免子进程并发冲突
+        _scout_workers = 1 if scout_cfg.get("provider", "").endswith("_cli") else 3
         scouted = scout_all(
             scout_client, scout_cfg, enriched,
             progress_callback=scout_progress,
-            max_workers=3,
+            max_workers=_scout_workers,
             username=username,
         )
 
