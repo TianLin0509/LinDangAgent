@@ -438,21 +438,30 @@ def run_war_room(
             for fut in futures:
                 general_reports.append(fut.result())
 
-    # ── Phase 1 审查：将领评分缺失则替补保护 ────────────────
+    # ── Phase 1 审查：将领评分缺失/异常则替补保护 ────────────────
+    _dims = ["基本面", "预期差", "资金面", "技术面"]
+
+    def _is_score_broken(scores: dict) -> bool:
+        """评分是否缺失或异常：完全失败、综合加权缺失、或多维度为0（解析不全）"""
+        if not scores or scores.get("_parse_failed") or scores.get("综合加权") is None:
+            return True
+        # 3个及以上维度=0 视为解析缺失（真实评分不会出现多维度恰好为0）
+        zero_count = sum(1 for d in _dims if scores.get(d, 0) == 0)
+        return zero_count >= 3
+
     valid_scores = [g["scores"].get("综合加权") for g in general_reports
-                    if g["scores"] and not g["scores"].get("_parse_failed")]
+                    if g["scores"] and not _is_score_broken(g["scores"])]
     for i, g in enumerate(general_reports):
-        if g["scores"].get("_parse_failed") or g["scores"].get("综合加权") is None:
+        if _is_score_broken(g["scores"]):
             if valid_scores:
-                # 用其他将领的中位数填充
                 median_val = sorted(valid_scores)[len(valid_scores) // 2]
-                logger.warning("[war_room] Phase1审查：将领%s评分缺失，用中位数%.1f替补", chr(65+i), median_val)
+                logger.warning("[war_room] Phase1审查：将领%s评分异常(%s)，用中位数%.1f替补",
+                               chr(65+i), g["scores"].get("综合加权", "?"), median_val)
                 g["scores"] = {"基本面": median_val, "预期差": median_val,
                                "资金面": median_val, "技术面": median_val,
                                "综合加权": median_val, "_substituted": True}
             else:
-                # 所有将领都失败，给默认中性分（不触发提前止损）
-                logger.warning("[war_room] Phase1审查：将领%s评分缺失且无可用替补，默认50分", chr(65+i))
+                logger.warning("[war_room] Phase1审查：将领%s评分异常且无可用替补，默认50分", chr(65+i))
                 g["scores"] = {"基本面": 50, "预期差": 50, "资金面": 50, "技术面": 50,
                                "综合加权": 50, "_substituted": True}
 
