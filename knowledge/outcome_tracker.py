@@ -504,6 +504,35 @@ def get_stock_history(stock_code: str) -> list[dict]:
         return [_row_to_outcome(dict(row)) for row in rows]
 
 
+def get_recent_scores_distribution(limit: int = 20) -> dict | None:
+    """获取最近N次分析的评分分布（中位数/均值/分位数），用于评分相对锚定。"""
+    mgr = get_manager()
+    try:
+        with mgr.read("outcomes") as conn:
+            rows = conn.execute(
+                "SELECT weighted_score FROM outcomes WHERE weighted_score IS NOT NULL "
+                "ORDER BY report_date DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+
+        if len(rows) < 5:
+            return None
+
+        scores = sorted([row[0] for row in rows])
+        n = len(scores)
+        return {
+            "count": n,
+            "median": scores[n // 2],
+            "mean": sum(scores) / n,
+            "p25": scores[n // 4],
+            "p75": scores[3 * n // 4],
+            "min": scores[0],
+            "max": scores[-1],
+        }
+    except Exception:
+        return None
+
+
 # ── Top100 推荐结果追踪 ──────────────────────────────────────────
 
 TOP10_CACHE_DIR = BASE_DIR / "Stock_top10" / "cache"

@@ -71,7 +71,7 @@ class WarRoomResult:
     report_id: str = ""
 
 
-def _call_single_model(prompt: str, system: str, model_name: str) -> str:
+def _call_single_model(prompt: str, system: str, model_name: str, max_tokens: int = 8000) -> str:
     """调用单个模型，返回完整文本。任何模型失败时自动降级到 Claude Sonnet。"""
     from ai.client import call_ai, call_ai_stream, get_ai_client
 
@@ -87,20 +87,27 @@ def _call_single_model(prompt: str, system: str, model_name: str) -> str:
     try:
         # CLI 模型走 call_ai_stream（内部会路由到 CLI provider）
         if cfg.get("provider") in ("gemini_cli", "codex_cli", "claude_cli"):
-            stream = call_ai_stream(client, cfg, prompt, system=system, max_tokens=12000)
+            stream = call_ai_stream(client, cfg, prompt, system=system, max_tokens=max_tokens)
             for _ in stream:
                 pass
             text = stream.full_text
         else:
             # API 模型走 call_ai
-            text, call_err = call_ai(client, cfg, prompt, system=system, max_tokens=12000)
+            text, call_err = call_ai(client, cfg, prompt, system=system, max_tokens=max_tokens)
             if call_err:
                 text = f"⚠️ 调用失败：{call_err}"
     except Exception as exc:
         text = f"⚠️ 异常：{exc}"
 
-    # ★ 失败重试：输出为错误或过短时，重试一次（同模型或 Claude Sonnet）
-    is_failure = "⚠️" in text[:20] or len(text.strip()) < 50
+    # ★ 失败重试：输出为错误、过短、或AI拒绝回答时，重试一次
+    _REFUSAL_PATTERNS = [
+        "无法分析", "我无法", "作为AI", "作为一个AI", "I cannot", "I'm unable",
+        "不能提供投资", "无法提供具体", "我没有能力", "不具备分析",
+    ]
+    is_refusal = any(p in text[:200] for p in _REFUSAL_PATTERNS)
+    is_failure = "⚠️" in text[:20] or len(text.strip()) < 50 or is_refusal
+    if is_refusal:
+        logger.warning("[_call_single_model] %s 检测到拒绝回答模式", model_name)
     if is_failure:
         # Claude 模型：用同模型重试一次（不降级，保持评估质量）
         # 非 Claude 模型：用 Claude Sonnet 兜底
@@ -111,7 +118,7 @@ def _call_single_model(prompt: str, system: str, model_name: str) -> str:
         try:
             fb_client, fb_cfg, fb_err = get_ai_client(retry_name)
             if fb_cfg:
-                stream = call_ai_stream(fb_client, fb_cfg, prompt, system=system, max_tokens=12000)
+                stream = call_ai_stream(fb_client, fb_cfg, prompt, system=system, max_tokens=max_tokens)
                 for _ in stream:
                     pass
                 if stream.full_text and len(stream.full_text.strip()) > 50:
@@ -198,6 +205,38 @@ def _fallback_scores_from_generals(general_reports: list, final_text: str = "") 
     return final_scores
 
 
+def _apply_premortem_cap(scores: dict, final_text: str) -> dict:
+    """Pre-mortem一致性检查：高概率致命风险→评分封顶。
+
+    从林彪报告的Pre-mortem段中提取概率标签，与最终评分交叉验证。
+    """
+    # 提取Pre-mortem段落
+    pm_match = re.search(r"(?:Pre-mortem|沙盘推演|验尸)(.*?)(?:Step\s*4|双轨评分|分歧裁决|### [四五])", final_text, re.DOTALL | re.IGNORECASE)
+    if not pm_match:
+        return scores
+
+    pm_text = pm_match.group(1)
+
+    # 统计概率标签
+    high_count = len(re.findall(r"(?:当前)?(?:发生)?概率\s*[:：]?\s*高", pm_text))
+    mid_count = len(re.findall(r"(?:当前)?(?:发生)?概率\s*[:：]?\s*中", pm_text))
+
+    composite = scores.get("综合加权", 50)
+
+    if high_count >= 1 and composite > 70:
+        scores["综合加权"] = min(composite, 70.0)
+        scores["_premortem_cap"] = f"高概率致命风险{high_count}项→综合上限70"
+        if scores.get("_rating") in ("总攻信号", "侦察待命"):
+            scores["_rating"] = "按兵不动"
+        logger.info("[war_room] Pre-mortem封顶: 高概率%d项, 综合%.1f→70", high_count, composite)
+    elif mid_count >= 2 and composite > 75:
+        scores["综合加权"] = min(composite, 75.0)
+        scores["_premortem_cap"] = f"中概率致命风险{mid_count}项→综合上限75"
+        logger.info("[war_room] Pre-mortem封顶: 中概率%d项, 综合%.1f→75", mid_count, composite)
+
+    return scores
+
+
 def _parse_general_report(text: str) -> dict:
     """从将领报告中提取评分和摘要"""
     from services.analysis_service import parse_scores, _split_report_and_summary
@@ -243,11 +282,14 @@ _SCORE_DIMS = ["基本面", "预期差", "资金面", "技术面"]
 
 
 def _is_score_broken(scores: dict) -> bool:
-    """评分是否缺失或异常：完全失败、综合加权缺失、或多维度为0（解析不全）"""
+    """评分是否缺失或异常：完全失败、综合加权缺失、或多维度缺失/为0（解析不全）"""
     if not scores or scores.get("_parse_failed") or scores.get("综合加权") is None:
         return True
+    # 统计缺失维度（key不存在）和零值维度
+    missing_count = sum(1 for d in _SCORE_DIMS if d not in scores)
     zero_count = sum(1 for d in _SCORE_DIMS if scores.get(d, 0) == 0)
-    return zero_count >= 3
+    # 任何维度缺失即视为broken（之前要求>=3太宽松）
+    return missing_count >= 1 or zero_count >= 3
 
 
 def _build_score_extraction_prompt(report_text: str) -> str:
@@ -394,20 +436,8 @@ def run_war_room(
     if not macro_brief:
         macro_brief = "（宏观数据采集失败，请以个股基本面为主要判断依据）"
 
-    # 构建差异化 prompt：共用简报 + 专长详情 + 精简输出格式（省55%+ token）
-    shared_brief, system_prompt, detail_sections, output_formats = build_war_room_prompts(
-        name=resolved_name,
-        ts_code=ts_code,
-        context=context,
-        price_snapshot=snap,
-        indicators_section=indicators_section,
-        knowledge_context=knowledge_ctx,
-        sentiment_context=sentiment_ctx,
-        macro_context=macro_brief,
-    )
-
-    # 同时保留旧接口用于非指挥部场景（单模型分析等）
-    user_prompt, _ = build_report_prompt(
+    # 构建全维度 prompt：统一全量数据 + 风格化输出格式（v4.0）
+    full_data_brief, system_prompt, output_formats = build_war_room_prompts(
         name=resolved_name,
         ts_code=ts_code,
         context=context,
@@ -434,15 +464,14 @@ def run_war_room(
     CLAUDE_FALLBACK = "⚡ Claude Sonnet（MAX）"
 
     def _run_general(i, model):
-        # system prompt 文件通道：角色设定 + 将领人设 + 共用简报 + 输出模板
-        # stdin 通道：仅将领专长数据（2800-3500字）
+        # v4.0: system = 角色设定 + 将领人设 + 输出模板
+        #        stdin = 统一全量数据（三人相同）
         full_system = (
             system_prompt
             + GENERAL_PERSONALITIES[i % len(GENERAL_PERSONALITIES)]
-            + "\n\n" + shared_brief
             + "\n\n" + output_formats[i % len(output_formats)]
         )
-        stdin_prompt = detail_sections[i % len(detail_sections)]
+        stdin_prompt = full_data_brief
 
         logger.info("[war_room] 将领%s stdin %d字 / system %d字",
                     chr(65 + i), len(stdin_prompt), len(full_system))
@@ -490,21 +519,56 @@ def run_war_room(
                 general_reports.append(fut.result())
 
     # ── Phase 1 审查：将领评分缺失/异常则替补保护（最后防线）────────
-    valid_scores = [g["scores"].get("综合加权") for g in general_reports
-                    if g["scores"] and not _is_score_broken(g["scores"])]
+    # 先收集所有将领的各维度评分，用于后续精准补全
+    _all_dim_vals = {d: [] for d in _SCORE_DIMS}
+    for g in general_reports:
+        for d in _SCORE_DIMS:
+            v = g["scores"].get(d)
+            if isinstance(v, (int, float)) and v > 0:
+                _all_dim_vals[d].append(v)
+
     for i, g in enumerate(general_reports):
         if _is_score_broken(g["scores"]):
-            if valid_scores:
-                median_val = sorted(valid_scores)[len(valid_scores) // 2]
-                logger.warning("[war_room] Phase1审查：将领%s评分异常(%s)，用中位数%.1f替补",
-                               chr(65+i), g["scores"].get("综合加权", "?"), median_val)
-                g["scores"] = {"基本面": median_val, "预期差": median_val,
-                               "资金面": median_val, "技术面": median_val,
-                               "综合加权": median_val, "_substituted": True}
+            # 精准补全：仅填充缺失维度，保留已有维度的原始评分
+            missing_dims = [d for d in _SCORE_DIMS if d not in g["scores"] or g["scores"].get(d, 0) == 0]
+            has_any_valid = any(d in g["scores"] and isinstance(g["scores"].get(d), (int, float)) and g["scores"][d] > 0
+                                for d in _SCORE_DIMS)
+
+            if has_any_valid and missing_dims:
+                # 部分缺失：从其他将领取该维度中位数补全
+                for d in missing_dims:
+                    vals = _all_dim_vals.get(d, [])
+                    if vals:
+                        median_val = sorted(vals)[len(vals) // 2]
+                        g["scores"][d] = median_val
+                        logger.info("[war_room] Phase1审查：将领%s %s缺失，用其他将领中位数%.1f补全",
+                                    chr(65+i), d, median_val)
+                    else:
+                        g["scores"][d] = 50.0
+                        logger.info("[war_room] Phase1审查：将领%s %s缺失且无参考，默认50", chr(65+i), d)
+                g["scores"]["_partial_filled"] = True
             else:
-                logger.warning("[war_room] Phase1审查：将领%s评分异常且无可用替补，默认50分", chr(65+i))
-                g["scores"] = {"基本面": 50, "预期差": 50, "资金面": 50, "技术面": 50,
-                               "综合加权": 50, "_substituted": True}
+                # 全部缺失：整体替补
+                valid_scores = [gg["scores"].get("综合加权") for gg in general_reports
+                                if gg["scores"] and not _is_score_broken(gg["scores"])]
+                if valid_scores:
+                    median_val = sorted(valid_scores)[len(valid_scores) // 2]
+                    logger.warning("[war_room] Phase1审查：将领%s评分全缺(%s)，用中位数%.1f替补",
+                                   chr(65+i), g["scores"].get("综合加权", "?"), median_val)
+                    g["scores"] = {"基本面": median_val, "预期差": median_val,
+                                   "资金面": median_val, "技术面": median_val,
+                                   "综合加权": median_val, "_substituted": True}
+                else:
+                    logger.warning("[war_room] Phase1审查：将领%s评分全缺且无可用替补，默认50分", chr(65+i))
+                    g["scores"] = {"基本面": 50, "预期差": 50, "资金面": 50, "技术面": 50,
+                                   "综合加权": 50, "_substituted": True}
+
+            # 重算综合加权
+            from services.analysis_service import SCORE_WEIGHTS
+            ws = sum(g["scores"].get(d, 50) * SCORE_WEIGHTS[d] for d in _SCORE_DIMS)
+            tw = sum(SCORE_WEIGHTS[d] for d in _SCORE_DIMS if d in g["scores"])
+            if tw > 0:
+                g["scores"]["综合加权"] = round(ws / tw, 1)
 
     # ── 提前止损检查：三将领全线撤退则跳过后续 ────────────────
     all_weighted = [g["scores"].get("综合加权", 50) for g in general_reports if g["scores"]]
@@ -520,12 +584,17 @@ def run_war_room(
             from ai.prompts_war_room import build_han_veto_prompt
             # 取将领 A（黄永胜）和 C（邓华）的摘要给韩先楚审查
             ac_brief = ""
-            general_names_ac = ["A·黄永胜(攻势)", "C·邓华(全局)"]
+            general_names_ac = ["A·黄永胜(进攻型)", "C·邓华(均衡型)"]
             for idx in [0, 2]:
                 if idx < len(general_reports):
                     g = general_reports[idx]
                     label = general_names_ac[0 if idx == 0 else 1]
-                    ac_brief += f"【{label}】综合{g['scores'].get('综合加权', '?')}分：{g.get('summary', '无')}\n"
+                    # v4.0: 传入更完整的摘要（1500字），支持逻辑质疑
+                    summary = g.get('summary', '无')[:1500]
+                    s = g['scores']
+                    dims_str = (f"基{s.get('基本面', '?')}/期{s.get('预期差', '?')}/"
+                                f"资{s.get('资金面', '?')}/技{s.get('技术面', '?')}")
+                    ac_brief += f"【{label}】综合{s.get('综合加权', '?')}分({dims_str})：{summary}\n\n"
 
             han_user, han_system = build_han_veto_prompt(ac_brief, resolved_name)
             # 韩先楚用将领B的模型（如果有专门的侦察模型则更好）
@@ -548,16 +617,24 @@ def run_war_room(
                         han_veto_reason = han_text
                         logger.info("[war_room] Phase 1.5: 韩先楚一票否决！置信度 %d%%", confidence)
                 elif "<<<VETO>>>" in han_text:
-                    # <<<VETO>>> 裸标记也要验证：检查是否有明确的否决陈述
-                    # 避免模型把标记当格式示例输出而误触否决
-                    veto_keywords = ["否决", "一票否决", "致命", "重大风险", "全线撤退"]
-                    has_veto_intent = any(kw in han_text[:500] for kw in veto_keywords)
-                    if has_veto_intent:
-                        han_veto = True
-                        han_veto_reason = han_text
-                        logger.info("[war_room] Phase 1.5: 韩先楚一票否决（<<<VETO>>>标记+否决意图确认）")
+                    # <<<VETO>>> 裸标记安全解析：排除代码块、引用块、格式示例中的误触发
+                    veto_pos = han_text.index("<<<VETO>>>")
+                    # 检查标记前50字符是否在代码块或引用块中
+                    context_before = han_text[max(0, veto_pos - 80):veto_pos]
+                    in_code_block = "```" in context_before or context_before.strip().startswith(">")
+                    in_example = any(kw in context_before.lower() for kw in ["格式", "示例", "example", "format", "输出格式"])
+
+                    if in_code_block or in_example:
+                        logger.info("[war_room] Phase 1.5: <<<VETO>>>出现在代码块/示例中，忽略")
                     else:
-                        logger.info("[war_room] Phase 1.5: 韩先楚输出含<<<VETO>>>但无明确否决意图，忽略")
+                        veto_keywords = ["否决", "一票否决", "致命", "重大风险", "全线撤退"]
+                        has_veto_intent = any(kw in han_text[:500] for kw in veto_keywords)
+                        if has_veto_intent:
+                            han_veto = True
+                            han_veto_reason = han_text
+                            logger.info("[war_room] Phase 1.5: 韩先楚一票否决（<<<VETO>>>标记+否决意图确认）")
+                        else:
+                            logger.info("[war_room] Phase 1.5: 韩先楚输出含<<<VETO>>>但无明确否决意图，忽略")
 
                 # 韩先楚的反驳注入将领报告（无论是否否决）
                 if len(general_reports) > 1:
@@ -588,13 +665,23 @@ def run_war_room(
     # ── Phase 3: 跳过刘亚楼（评分对比表由代码生成，林彪直接裁决）─
     scores_table = _build_scores_table(general_reports)
 
-    # 将领报告摘要（代替刘亚楼的汇总，零AI成本）
-    general_names = ["A·黄永胜(攻势)", "B·韩先楚(侦察)", "C·邓华(全局)"]
+    # 将领报告摘要（结构化格式，节省token）
+    general_names = ["A·黄永胜(进攻型)", "B·韩先楚(防守型)", "C·邓华(均衡型)"]
     generals_brief_parts = []
     for i, g in enumerate(general_reports):
         label = general_names[i] if i < len(general_names) else f"将领{chr(65+i)}"
+        s = g["scores"]
         summary = g.get("summary", "无")
-        generals_brief_parts.append(f"【{label}】综合{g['scores'].get('综合加权', '?')}分：{summary}")
+        # 结构化：评分+立场+核心判断，比自由文本节省~40% token
+        stance = s.get("_stance", s.get("_ai_rating", ""))
+        stance_str = f" 立场:{stance}" if stance else ""
+        dims_str = (f"基{s.get('基本面', '?')}/期{s.get('预期差', '?')}/"
+                    f"资{s.get('资金面', '?')}/技{s.get('技术面', '?')}")
+        # 摘要截断到200字（原来不限）
+        brief_summary = summary[:200] + ("…" if len(summary) > 200 else "")
+        generals_brief_parts.append(
+            f"【{label}】综合{s.get('综合加权', '?')}分({dims_str}){stance_str}\n{brief_summary}"
+        )
     generals_brief = "\n".join(generals_brief_parts)
 
     # ★ 韩先楚交叉审查结果注入（非否决时的反驳意见供林彪参考）
@@ -618,23 +705,10 @@ def run_war_room(
             logger.warning("[war_room] Phase 3.5 debate failed: %r", exc)
 
     # ── Phase 4: 司令员林彪独立判断 ─────────────────────────────
-    data_summary = f"""{macro_full + chr(10) + chr(10) if macro_full else ''}【价格快照】
-{snap}
-
-【技术指标】
-{indicators_section[:800]}
-
-【风险清单】
-{context.get('risk_checklist', '未排查')}
-
-【财报情报概况】
-{context.get('report_period_info', '暂无')}
-
-【券商研报】
-{context.get('research_reports', '暂无')[:600]}
-
-【分析师一致预期】
-{context.get('analyst_consensus', '暂无')[:400]}"""
+    # v4.0: 林彪收到与将领完全一致的全量数据（真正独立初判）
+    data_summary = full_data_brief
+    if macro_full and macro_full not in data_summary:
+        data_summary = macro_full + "\n\n" + data_summary
 
     final_text = ""
     final_scores = None
@@ -676,27 +750,62 @@ def run_war_room(
     else:
         logger.info("[war_room] Phase 4: 司令员林彪独立判断（%s）", commander_model)
 
+        # ★ 近期评分分布（相对锚定）
+        score_distribution_hint = ""
+        try:
+            from knowledge.outcome_tracker import get_recent_scores_distribution
+            dist = get_recent_scores_distribution(limit=20)
+            if dist:
+                score_distribution_hint = (
+                    f"\n\n【近期评分分布参考（最近{dist['count']}次分析）】\n"
+                    f"中位数: {dist['median']:.0f}分 | 均值: {dist['mean']:.0f}分 | "
+                    f"25%分位: {dist['p25']:.0f}分 | 75%分位: {dist['p75']:.0f}分\n"
+                    f"⚠️ 若你认为此股优于近期平均水平，评分应显著高于中位数{dist['median']:.0f}分；"
+                    f"反之亦然。避免所有股票都给出相近的安全分。"
+                )
+        except Exception as exc:
+            logger.debug("[war_room] score distribution hint failed: %r", exc)
+
         # 辩论结果注入林彪 prompt（如果有）
         debate_section = ""
         if debate_text:
             debate_section = f"\n\n【Bull vs Bear 辩论记录】\n{debate_text[:1000]}"
 
         lin_user, lin_system = build_lin_biao_prompt(
-            staff_brief=generals_brief + debate_section,
+            staff_brief=generals_brief + debate_section + score_distribution_hint,
             data_summary=data_summary,
             scores_table=scores_table,
             knowledge_context=knowledge_ctx,
         )
-        final_text = _call_single_model(lin_user, lin_system, commander_model)
+        final_text = _call_single_model(lin_user, lin_system, commander_model, max_tokens=12000)
 
         # ★ Claude兜底：commander 输出为错误时，用 Claude Sonnet 重试
         if "⚠️" in final_text[:20] or len(final_text.strip()) < 100:
             logger.warning("[war_room] 林彪（%s）输出异常，Claude Sonnet 兜底...", commander_model)
-            final_text = _call_single_model(lin_user, lin_system, CLAUDE_FALLBACK)
+            final_text = _call_single_model(lin_user, lin_system, CLAUDE_FALLBACK, max_tokens=12000)
 
         final_scores = parse_scores(final_text)
         if final_scores:
             final_scores = apply_bucket_correction(final_scores)
+            # ★ Pre-mortem一致性检查：高概率致命风险→评分上限70
+            final_scores = _apply_premortem_cap(final_scores, final_text)
+            # ★ 三将领分歧熔断：标准差>15时下修5分（不确定性溢价）
+            g_weighted = [g["scores"].get("综合加权", 50) for g in general_reports
+                          if g["scores"] and not g["scores"].get("_substituted")]
+            if len(g_weighted) >= 2:
+                import statistics
+                g_std = statistics.stdev(g_weighted)
+                if g_std > 15:
+                    old_w = final_scores.get("综合加权", 50)
+                    final_scores["综合加权"] = round(old_w - 5, 1)
+                    final_scores["_divergence_penalty"] = f"将领分歧大(σ={g_std:.1f})→-5分"
+                    logger.info("[war_room] 分歧熔断: σ=%.1f>15, 综合%.1f→%.1f",
+                                g_std, old_w, final_scores["综合加权"])
+            # ★ 评分区分度自动修正
+            from services.analysis_service import check_score_spread
+            spread_msg = check_score_spread(final_scores, auto_correct=True)
+            if spread_msg:
+                logger.info("[war_room] %s", spread_msg)
         else:
             # ★ fallback：林彪输出没有 <<<SCORES>>> 块时，从将领评分加权计算
             logger.warning("[war_room] 林彪未输出SCORES块，从将领评分推算最终分数")
@@ -749,11 +858,8 @@ def run_war_room(
     )
     logger.info("[war_room] 完成: %s 综合 %s", resolved_name, (final_scores or {}).get("综合加权", "?"))
 
-    # 发送指挥部战报邮件
-    try:
-        _send_war_room_email(result)
-    except Exception as exc:
-        logger.warning("[war_room] email failed: %r", exc)
+    # 邮件由 cli.py export-image 统一发送，war_room 不再自动发
+    # （避免 war_room 自动发 + export-image 再发 = 重复两封）
 
     return result
 
@@ -856,39 +962,22 @@ def _build_combined_markdown(
     parts.append("\n---\n## 司令员林彪·最终战术判断\n")
     parts.append(final_text)
 
-    # 按章节合并将领报告
-    # 章节→将领映射：每章优先取专长将领的内容
-    chapter_map = {
-        "一": 0,   # 第一章 → 将领A（黄永胜，战场态势），将领C也写但A优先
-        "二": 1,   # 第二章 → 将领B（韩先楚，基本面）
-        "三": 0,   # 第三章 → 将领A（预期差催化）
-        "四": 0,   # 第四章 → 将领A（题材资金），将领C也写但A有资金面数据
-        "五": 2,   # 第五章 → 将领C（邓华，技术面）
-        "六": 1,   # 第六章 → 将领B（韩先楚，撤退纪律）
-    }
-
-    # 从每位将领的报告中提取章节
+    # v4.0: 从每位将领的报告中提取章节，按质量选最优
     general_chapters: list[dict[str, str]] = []
     for g in general_reports:
         text = g.get("report_text", "")
         chapters = _extract_chapters(text)
         general_chapters.append(chapters)
 
-    parts.append("\n---\n## 合并战报（按章节·各取专长）\n")
+    parts.append("\n---\n## 合并战报（按章节·质量优选）\n")
 
-    for ch_num, preferred_idx in chapter_map.items():
-        # 优先取专长将领的章节，如果没有则从其他将领找
-        content = ""
-        if preferred_idx < len(general_chapters):
-            content = general_chapters[preferred_idx].get(ch_num, "")
-        if not content:
-            # 兜底：从任何有该章节的将领中找
-            for gc in general_chapters:
-                content = gc.get(ch_num, "")
-                if content:
-                    break
-        if content:
-            parts.append(content.strip())
+    general_names = ["A·黄永胜", "B·韩先楚", "C·邓华"]
+    for ch_num in ["一", "二", "三", "四", "五", "六"]:
+        best_idx, best_content = _select_best_chapter(ch_num, general_chapters)
+        if best_content:
+            source = general_names[best_idx] if best_idx < len(general_names) else f"将领{best_idx}"
+            parts.append(f"<!-- 来源: {source} -->")
+            parts.append(best_content.strip())
             parts.append("")
 
     # 第七章（评分）从林彪报告中提取
@@ -925,6 +1014,36 @@ def _extract_chapters(text: str) -> dict[str, str]:
         chapters[ch_num] = text[start:end]
 
     return chapters
+
+
+def _select_best_chapter(chapter_num: str, general_chapters: list[dict]) -> tuple[int, str]:
+    """按质量从三位将领中选最优章节内容。
+
+    质量评分 = 表格行数×3 + 数字引用数×1 + 结论性词汇×2
+    字数<100的章节不参选。
+    """
+    candidates = []
+    for i, gc in enumerate(general_chapters):
+        content = gc.get(chapter_num, "")
+        if len(content) < 100:
+            continue
+        table_count = content.count("|")
+        number_count = len(re.findall(r"\d+\.?\d*%?", content))
+        conclusion_words = sum(1 for w in ["结论", "判断", "建议", "评级", "档", "证伪", "否决"]
+                               if w in content)
+        quality = table_count * 3 + number_count + conclusion_words * 2
+        candidates.append((i, quality, content))
+
+    if not candidates:
+        # 兜底：取任何有内容的
+        for i, gc in enumerate(general_chapters):
+            content = gc.get(chapter_num, "")
+            if content.strip():
+                return (i, content)
+        return (0, "")
+
+    candidates.sort(key=lambda x: x[1], reverse=True)
+    return (candidates[0][0], candidates[0][2])
 
 
 def _run_bull_bear_debate(general_reports: list, generals_brief: str, model_name: str) -> str:

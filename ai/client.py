@@ -173,17 +173,17 @@ def call_ai_stream(client: OpenAI | None, cfg: dict, prompt: str,
     CLI 模式下一次性返回全文（非流式）。
     """
     # CLI 模式：Gemini CLI / Codex CLI / Claude Code CLI
+    # 使用 call_cli_robust 自动重试（不降级，尊重用户选择的模型）
     if cfg.get("provider") in ("gemini_cli", "codex_cli", "claude_cli"):
-        from ai.cli_providers import call_gemini_cli, call_codex_cli, call_claude_cli
-        if cfg["provider"] == "gemini_cli":
-            fn = call_gemini_cli
-        elif cfg["provider"] == "codex_cli":
-            fn = call_codex_cli
-        else:
-            fn = lambda p, s: call_claude_cli(p, s, model=cfg.get("model", "opus"))
+        from ai.cli_providers import call_cli_robust
+        _provider_map = {"gemini_cli": "gemini", "codex_cli": "codex", "claude_cli": "claude"}
+        _primary = _provider_map[cfg["provider"]]
 
         def _cli_generate():
-            text, err = fn(prompt, system)
+            text, err, _model = call_cli_robust(
+                prompt, system=system, primary=_primary,
+                timeout=450, max_retries=3, fallback_chain=[],
+            )
             if err:
                 yield f"\n\n⚠️ CLI 调用失败：{err}"
             else:
@@ -259,16 +259,15 @@ def call_ai(client: OpenAI | None, cfg: dict, prompt: str,
     CLI 模式（gemini_cli/codex_cli/claude_cli）走 cli_providers。
     username 用于 per-user token 持久化。
     """
-    # CLI 模式
+    # CLI 模式：使用 call_cli_robust 自动重试（不降级，尊重用户选择的模型）
     if cfg.get("provider") in ("gemini_cli", "codex_cli", "claude_cli"):
-        from ai.cli_providers import call_gemini_cli, call_codex_cli, call_claude_cli
-        if cfg["provider"] == "gemini_cli":
-            fn = call_gemini_cli
-        elif cfg["provider"] == "codex_cli":
-            fn = call_codex_cli
-        else:
-            fn = lambda p, s: call_claude_cli(p, s, model=cfg.get("model", "opus"))
-        text, err = fn(prompt, system)
+        from ai.cli_providers import call_cli_robust
+        _provider_map = {"gemini_cli": "gemini", "codex_cli": "codex", "claude_cli": "claude"}
+        _primary = _provider_map[cfg["provider"]]
+        text, err, _model = call_cli_robust(
+            prompt, system=system, primary=_primary,
+            timeout=300, max_retries=3, fallback_chain=[],
+        )
         if not err:
             est = int((len(prompt) + len(text)) * 0.7)
             add_tokens(total_tokens=est, username=username)

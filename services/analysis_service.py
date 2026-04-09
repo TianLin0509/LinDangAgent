@@ -108,6 +108,13 @@ def parse_scores(text: str) -> dict | None:
             val = max(0.0, min(100.0, val))
             scores[key] = val
             continue
+        # 检测非数字占位符（如 "基本面: —/100" 或 "基本面: -"），标记为缺失
+        placeholder = re.match(r"(.+?)[:：]\s*[—\-–]+", line)
+        if placeholder:
+            key = placeholder.group(1).strip()
+            if key in ("基本面", "预期差", "资金面", "技术面"):
+                flags[f"_missing_{key}"] = True
+                logger.warning("[parse_scores] %s 使用了占位符'—'，标记为缺失", key)
         # 解析 "S级豁免: 是/否" 和 "致命缺陷: 有/无" 格式
         flag_parsed = re.match(r"(.+?)[:：]\s*(.+)", line)
         if flag_parsed:
@@ -194,10 +201,27 @@ def apply_bucket_correction(scores: dict) -> dict:
     return scores
 
 
-def check_score_spread(scores: dict) -> str | None:
+def check_score_spread(scores: dict, auto_correct: bool = False) -> str | None:
+    """检测评分区分度不足，可选自动修正。
+
+    auto_correct=True 时，四维均在60-80区间时强制拉开区分度：
+    最高维上修5分，最低维下修5分。
+    """
     dims = ["基本面", "预期差", "技术面", "资金面"]
     all_scores = [scores.get(dim, 50) for dim in dims]
     if all(60 <= score <= 80 for score in all_scores):
+        if auto_correct:
+            max_dim = dims[all_scores.index(max(all_scores))]
+            min_dim = dims[all_scores.index(min(all_scores))]
+            scores[max_dim] = min(scores[max_dim] + 5, 100)
+            scores[min_dim] = max(scores[min_dim] - 5, 0)
+            # 重算综合加权
+            weighted_sum = sum(scores.get(d, 50) * SCORE_WEIGHTS[d] for d in dims)
+            total_weight = sum(SCORE_WEIGHTS[d] for d in dims if d in scores)
+            if total_weight > 0:
+                scores["综合加权"] = round(weighted_sum / total_weight, 1)
+            scores["_spread_corrected"] = True
+            return f"评分区分度修正：{max_dim}+5→{scores[max_dim]}, {min_dim}-5→{scores[min_dim]}"
         return "评分区分度不足：四维评分均落在 60-80 分区间。"
     return None
 
