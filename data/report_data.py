@@ -849,12 +849,16 @@ def build_report_context(ts_code: str, name: str, progress_cb=None) -> tuple[dic
     if not isinstance(price_df, pd.DataFrame):
         price_df = pd.DataFrame()
 
-    income_df = _unpack("income", pd.DataFrame()) or pd.DataFrame()
-    bs_df = _unpack("balance", pd.DataFrame()) or pd.DataFrame()
-    cf_df = _unpack("cashflow", pd.DataFrame()) or pd.DataFrame()
-    fina_df = _unpack("fina_ind", pd.DataFrame()) or pd.DataFrame()
-    mainbz_df = _unpack("mainbz", pd.DataFrame()) or pd.DataFrame()
-    audit_df = _unpack("audit", pd.DataFrame()) or pd.DataFrame()
+    def _unpack_df(key: str) -> pd.DataFrame:
+        v = _unpack(key, pd.DataFrame())
+        return v if isinstance(v, pd.DataFrame) else pd.DataFrame()
+
+    income_df = _unpack_df("income")
+    bs_df = _unpack_df("balance")
+    cf_df = _unpack_df("cashflow")
+    fina_df = _unpack_df("fina_ind")
+    mainbz_df = _unpack_df("mainbz")
+    audit_df = _unpack_df("audit")
 
     # ── 构建 context dict ─────────────────────────────────────────────
     ctx["basic_info"] = str(info) if info else "暂无基本信息"
