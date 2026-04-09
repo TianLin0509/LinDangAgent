@@ -14,11 +14,11 @@ from datetime import date
 import numpy as np
 import pandas as pd
 
-from core.ai_client import call_ai
-from core.tushare_client import price_summary, to_ts_code
-from top10.report_context import build_report_context
-from top10.report_prompts import REPORT_SYSTEM, build_report_prompt
-from top10.report_storage import save_top10_report
+from ai.client import call_ai
+from data.tushare_client import price_summary, to_ts_code
+from Stock_top10.top10.report_context import build_report_context
+from Stock_top10.top10.report_prompts import REPORT_SYSTEM, build_report_prompt
+from Stock_top10.top10.report_storage import save_top10_report
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +89,7 @@ def _split_report_and_summary(markdown_text: str) -> tuple[str, str]:
     parts = cleaned.split("<<<REPORT_END>>>")
     if len(parts) >= 2:
         summary = parts[-1].strip()
-        summary = re.sub(r"^\s*#\s*💡\s*核心摘要\s*", "", summary).strip()
+        summary = re.sub(r"^\s*#\s*(?:💡\s*)?(?:核心摘要|战役总结)\s*", "", summary).strip()
         summary = re.sub(r"\s+", " ", summary)
         report_body = parts[0].strip()
         if summary and report_body:
@@ -98,6 +98,42 @@ def _split_report_and_summary(markdown_text: str) -> tuple[str, str]:
 
 
 def _parse_match_score(text: str) -> float:
+    """提取综合评分，兼容新旧两种格式：
+    旧格式：综合匹配度 85 分（0-100制）
+    新格式（林彪版）：<<<SCORES>>> 块中的综合加权，或正文中 X.X分(评级)（1-10制，×10 转换）
+    """
+    # 1. 尝试从 <<<SCORES>>> 块中提取
+    scores_block = re.search(r"<<<SCORES>>>(.*?)<<<END_SCORES>>>", text, re.DOTALL)
+    if scores_block:
+        block = scores_block.group(1)
+        dims = {}
+        for dim in ["基本面", "预期差", "资金面", "技术面"]:
+            m = re.search(rf"{dim}\s*[:：]\s*(\d+(?:\.\d+)?)\s*(?:/\s*(100|10))?(?:\s|$)", block)
+            if m:
+                val = float(m.group(1))
+                scale = m.group(2)
+                if scale == "10":
+                    dims[dim] = val * 10
+                elif scale is None and val <= 10:
+                    dims[dim] = val * 10  # 纯数字≤10，推测10分制
+                else:
+                    dims[dim] = val
+        if dims:
+            weights = {"基本面": 0.15, "预期差": 0.35, "资金面": 0.30, "技术面": 0.20}
+            total_w = sum(weights.get(d, 0) for d in dims)
+            if total_w > 0:
+                weighted = sum(dims[d] * weights.get(d, 0) for d in dims) / total_w
+                return round(weighted, 1)  # 已经是百分制
+
+    # 2. 尝试从正文中提取"X.X分(评级)"（新格式）
+    m = re.search(r"(\d+(?:\.\d+)?)\s*分\s*[（(]\s*(?:总攻信号|侦察待命|按兵不动|全线撤退)", text)
+    if m:
+        score = float(m.group(1))
+        if score <= 10:
+            return round(score * 10, 1)
+        return score
+
+    # 3. 旧格式兜底
     patterns = [
         r"综合匹配度[^0-9]{0,8}(\d+(?:\.\d+)?)\s*分",
         r"综合匹配度[^0-9]{0,8}(\d+(?:\.\d+)?)",
@@ -110,6 +146,30 @@ def _parse_match_score(text: str) -> float:
 
 
 def _parse_subscore(text: str, label: str) -> float | None:
+    """提取子维度评分，兼容新旧格式"""
+    # 新格式：从 <<<SCORES>>> 块中提取 "基本面: X/10"
+    scores_block = re.search(r"<<<SCORES>>>(.*?)<<<END_SCORES>>>", text, re.DOTALL)
+    if scores_block:
+        block = scores_block.group(1)
+        # 映射新旧标签名
+        label_map = {
+            "基本面得分": "基本面",
+            "预期差与催化得分": "预期差",
+            "资金与身位得分": "资金面",
+            "技术面得分": "技术面",
+        }
+        new_label = label_map.get(label, label)
+        m = re.search(rf"{new_label}\s*[:：]\s*(\d+(?:\.\d+)?)\s*(?:/\s*(100|10))?(?:\s|$)", block)
+        if m:
+            val = float(m.group(1))
+            scale = m.group(2)
+            if scale == "10":
+                return val * 10
+            elif scale is None and val <= 10:
+                return val * 10
+            return val
+
+    # 旧格式兜底
     escaped = re.escape(label)
     match = re.search(rf"{escaped}[^\n]*?(\d+(?:\.\d+)?)\s*分", text)
     if match:
@@ -121,6 +181,10 @@ def _parse_rating(text: str) -> str:
     match = re.search(r"操作评级[：:]\s*\**\s*([^\n*]+)", text)
     if match:
         return match.group(1).strip()
+    # 兜底：尝试从战役总结中提取
+    m2 = re.search(r"(\d+(?:\.\d+)?)\s*分\s*[，,]?\s*(?:评级为|获|下达)?\s*(总攻信号|侦察待命|按兵不动|全线撤退)", text)
+    if m2:
+        return f"{m2.group(2)}[综合{m2.group(1)}]"
     return ""
 
 
@@ -293,10 +357,12 @@ def _build_single_report(client, cfg, row: pd.Series, model_name: str, username:
         "涨跌幅": _safe_float(row.get("涨跌幅", 0)) or 0.0,
         "行业": row.get("行业", "") or "",
         "综合匹配度": match_score,
-        "综合评分": round(match_score / 10, 2),
-        "基本面": round((fundamentals or 0) / 10, 1) if fundamentals is not None else None,
-        "题材热度": round((theme_score or 0) / 10, 1) if theme_score is not None else None,
-        "技术面": round((technical or 0) / 10, 1) if technical is not None else None,
+        "综合评分": round(match_score, 1),
+        "基本面得分": round(fundamentals, 1) if fundamentals is not None else None,
+        "预期差与催化得分": round(catalyst, 1) if catalyst is not None else None,
+        "资金与身位得分": round(capital, 1) if capital is not None else None,
+        "技术面得分": round(technical, 1) if technical is not None else None,
+        "题材热度": round((theme_score or 0), 1) if theme_score is not None else None,
         "短线建议": advice,
         "中期建议": advice,
         "操作评级": rating,
@@ -316,6 +382,144 @@ def _build_single_report(client, cfg, row: pd.Series, model_name: str, username:
 
 def score_single_stock(client, cfg, row: pd.Series, model_name: str = "", username: str = "") -> dict:
     return _build_single_report(client, cfg, row, model_name, username)
+
+
+def scout_all(
+    client,
+    cfg,
+    df: pd.DataFrame,
+    progress_callback=None,
+    max_workers: int = 3,
+    username: str = "",
+    batch_size: int = 5,
+) -> pd.DataFrame:
+    """Phase 1: 侦察兵快速评估（v3.0：批量模式，每批5只，减少API调用10倍）"""
+    from Stock_top10.top10.scout_prompt import SCOUT_SYSTEM, build_scout_prompt
+
+    results = []
+    total = len(df)
+    completed = 0
+
+    def _parse_batch_response(text: str, batch_codes: list, batch_names: list) -> list:
+        """解析批量Scout响应，提取每只股票的评分"""
+        parsed = []
+        # 按股票名/代码分割响应
+        lines = text.strip().splitlines()
+        current = {"代码": "", "股票名称": "", "scout_score": 50.0, "scout_logic": "", "scout_risk": ""}
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            # 检测是否是新股票的开始
+            for i, (code, name) in enumerate(zip(batch_codes, batch_names)):
+                if code in line or name in line:
+                    if current["代码"]:
+                        parsed.append(current.copy())
+                    current = {"代码": code, "股票名称": name,
+                               "scout_score": 50.0, "scout_logic": "", "scout_risk": ""}
+                    break
+            # 解析评分
+            m = re.search(r"评分[：:]\s*(\d+(?:\.\d+)?)\s*/\s*(100|10)", line)
+            if m:
+                score = float(m.group(1))
+                if int(m.group(2)) == 10:
+                    score *= 10
+                current["scout_score"] = score
+            m_logic = re.search(r"主攻逻辑[：:]\s*(.+)", line)
+            if m_logic:
+                current["scout_logic"] = m_logic.group(1).strip()[:40]
+            m_risk = re.search(r"风险点[：:]\s*(.+)", line)
+            if m_risk:
+                current["scout_risk"] = m_risk.group(1).strip()[:40]
+        if current["代码"]:
+            parsed.append(current)
+        return parsed
+
+    def _scout_batch(batch_rows: list):
+        """批量评估一组股票"""
+        prompts = []
+        codes = []
+        names = []
+        for _, row in batch_rows:
+            prompts.append(build_scout_prompt(row))
+            codes.append(row.get("代码", ""))
+            names.append(row.get("股票名称", ""))
+
+        # ★ 失败默认分=30（低于Scout门槛60，确保不会混入Top20）
+        FAIL_SCORE = 30.0
+
+        if len(prompts) == 1:
+            # 单只模式（含1次重试）
+            for attempt in range(2):
+                text, err = call_ai(client, cfg, prompts[0], system=SCOUT_SYSTEM,
+                                    max_tokens=100, username=username)
+                if not err and text:
+                    parsed = _parse_batch_response(text, codes, names)
+                    if parsed:
+                        return parsed
+                if attempt == 0:
+                    logger.debug("[scout] %s 首次失败，重试...", names[0])
+            return [{"代码": codes[0], "股票名称": names[0],
+                     "scout_score": FAIL_SCORE, "scout_logic": "", "scout_risk": "调用失败"}]
+
+        # 批量模式：合并多只到一个 prompt
+        combined = f"请逐只评估以下 {len(prompts)} 只股票，每只严格按三行格式输出（评分/主攻逻辑/风险点），股票之间用空行分隔。\n\n"
+        for i, (p, name, code) in enumerate(zip(prompts, names, codes)):
+            combined += f"--- 第{i+1}只：{name}（{code}）---\n{p}\n\n"
+
+        text, err = call_ai(client, cfg, combined, system=SCOUT_SYSTEM,
+                            max_tokens=100 * len(prompts), username=username)
+        if not err and text:
+            parsed = _parse_batch_response(text, codes, names)
+            if len(parsed) >= len(codes) * 0.5:  # 至少解析出一半
+                return parsed
+
+        # 批量失败则逐只回退（每只含1次重试）
+        fallback_results = []
+        for prompt, code, name in zip(prompts, codes, names):
+            r = {"代码": code, "股票名称": name,
+                 "scout_score": FAIL_SCORE, "scout_logic": "", "scout_risk": "调用失败"}
+            for attempt in range(2):
+                text, err = call_ai(client, cfg, prompt, system=SCOUT_SYSTEM,
+                                    max_tokens=100, username=username)
+                if not err and text:
+                    parsed = _parse_batch_response(text, [code], [name])
+                    if parsed:
+                        r = parsed[0]
+                        break
+                if attempt == 0:
+                    logger.debug("[scout] %s 逐只回退首次失败，重试...", name)
+            fallback_results.append(r)
+        return fallback_results
+
+    # 分批
+    rows_list = list(df.iterrows())
+    batches = [rows_list[i:i+batch_size] for i in range(0, len(rows_list), batch_size)]
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {pool.submit(_scout_batch, batch): batch for batch in batches}
+        for future in as_completed(futures):
+            batch = futures[future]
+            batch_names = [r.get("股票名称", "?") for _, r in batch]
+            try:
+                batch_results = future.result()
+                results.extend(batch_results)
+                completed += len(batch)
+                if progress_callback:
+                    progress_callback(completed, total,
+                                      f"🔍 批量侦察完成 {len(batch)} 只（{', '.join(batch_names[:3])}...）")
+            except Exception as exc:
+                completed += len(batch)
+                if progress_callback:
+                    progress_callback(completed, total, f"❌ 批量侦察失败：{exc}")
+
+    if not results:
+        return df
+
+    scout_df = pd.DataFrame(results)
+    merged = df.merge(scout_df[["代码", "scout_score", "scout_logic", "scout_risk"]], on="代码", how="left")
+    merged["scout_score"] = merged["scout_score"].fillna(30.0)  # 失败的不进Top20
+    return merged.sort_values("scout_score", ascending=False).reset_index(drop=True)
 
 
 def score_all(
@@ -371,3 +575,119 @@ def get_top_n(scored_df: pd.DataFrame, n: int = 10) -> pd.DataFrame:
     if scored_df.empty:
         return scored_df
     return scored_df.head(n)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 指挥部模式 — 用四野指挥部替代单模型分析（东野实战风格）
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _adapt_war_room_to_top10(wr_result, row: pd.Series) -> dict:
+    """将 WarRoomResult 转换为 Top10 scorer 兼容的 dict 格式。"""
+    final_scores = wr_result.final_scores or {}
+    match_score = final_scores.get("综合加权", 50.0)
+    fundamentals = final_scores.get("基本面")
+    catalyst = final_scores.get("预期差")
+    capital = final_scores.get("资金面")
+    technical = final_scores.get("技术面")
+
+    theme_score = None
+    vals = [v for v in [catalyst, capital] if v is not None]
+    if vals:
+        theme_score = sum(vals) / len(vals)
+
+    return {
+        "代码": str(row.get("代码", "")),
+        "股票名称": wr_result.stock_name or str(row.get("股票名称", "")),
+        "最新价": _safe_float(row.get("最新价", 0)) or 0.0,
+        "涨跌幅": _safe_float(row.get("涨跌幅", 0)) or 0.0,
+        "行业": row.get("行业", "") or "",
+        "综合匹配度": match_score,
+        "综合评分": round(match_score, 1),
+        "基本面得分": round(fundamentals, 1) if fundamentals is not None else None,
+        "预期差与催化得分": round(catalyst, 1) if catalyst is not None else None,
+        "资金与身位得分": round(capital, 1) if capital is not None else None,
+        "技术面得分": round(technical, 1) if technical is not None else None,
+        "题材热度": round(theme_score, 1) if theme_score is not None else None,
+        "短线建议": _derive_advice(match_score),
+        "中期建议": _derive_advice(match_score),
+        "操作评级": final_scores.get("_rating", "按兵不动"),
+        "核心摘要": wr_result.final_summary or "指挥部分析完成",
+        "AI分析": wr_result.combined_markdown,
+        "报告ID": wr_result.report_id,
+        "报告链接": "",
+        "本地报告路径": "",
+        "模型": "四野指挥部",
+        "人气排名": row.get("人气排名"),
+        "成交额排名": row.get("成交额排名"),
+        "雪球排名": row.get("雪球排名"),
+        "量化总分": row.get("量化总分"),
+        "量化信号": row.get("量化信号", ""),
+    }
+
+
+def score_all_war_room(
+    df: pd.DataFrame,
+    preset: str = "gemini",
+    progress_callback=None,
+    max_workers: int = 1,
+    username: str = "",
+) -> pd.DataFrame:
+    """用四野指挥部替代单模型分析 — 东野实战风格。
+
+    每只股票经过完整的 Phase 0-5 指挥部流程：
+    侦察科采集 → 三将领并行 → 追加侦察 → 刘亚楼汇总 → 林彪裁决
+
+    max_workers 建议设为 1-2（指挥部内部已有三将领并行）。
+    """
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))
+    from services.war_room import run_war_room
+
+    results = []
+    total = len(df)
+    completed_count = 0
+
+    def _analyze_one(idx_row):
+        _, row = idx_row
+        stock_name = str(row.get("股票名称", ""))
+        wr_result = run_war_room(
+            stock_name=stock_name,
+            username=username,
+            preset=preset,
+            skip_extra_recon=True,  # 批量模式跳过追加侦察，省1-2分钟/只
+        )
+        return _adapt_war_room_to_top10(wr_result, row)
+
+    # 指挥部内部已有三将领并行，外层并发不宜过高
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {
+            pool.submit(_analyze_one, (idx, row)): str(row.get("股票名称", ""))
+            for idx, row in df.iterrows()
+        }
+        for future in as_completed(futures):
+            name = futures[future]
+            completed_count += 1
+            try:
+                result = future.result()
+                results.append(result)
+                save_incremental_result(result, f"war_room_{preset}")
+                if progress_callback:
+                    score = result.get("综合匹配度", 0)
+                    rating = result.get("操作评级", "")
+                    progress_callback(
+                        completed_count, total,
+                        f"✅ {name} → 综合 {score:.1f}分 {rating}",
+                    )
+            except Exception as exc:
+                logger.error("[war_room_scorer] %s failed: %r", name, exc)
+                if progress_callback:
+                    progress_callback(completed_count, total, f"❌ {name} 指挥部分析失败：{exc}")
+
+    if not results:
+        return pd.DataFrame()
+
+    result_df = pd.DataFrame(results)
+    result_df = result_df.sort_values("综合匹配度", ascending=False).reset_index(drop=True)
+    result_df.index = result_df.index + 1
+    result_df.index.name = "推荐排名"
+    return result_df

@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pandas as pd
 
-from core.tushare_client import (
+from data.tushare_client import (
     _retry_call,
     get_basic_info,
     get_capital_flow,
@@ -39,17 +39,51 @@ def _empty_df() -> pd.DataFrame:
     return pd.DataFrame()
 
 
+def _code6(ts_code: str) -> str:
+    return ts_code.split(".")[0] if "." in ts_code else ts_code
+
+
+# akshare 兜底映射：endpoint → akshare 函数
+def _ak_fallback(endpoint: str, ts_code: str) -> pd.DataFrame:
+    """akshare 兜底获取财务数据"""
+    try:
+        import akshare as ak
+        code6 = _code6(ts_code)
+        if endpoint == "income":
+            return ak.stock_financial_report_sina(stock=code6, symbol="利润表").head(8)
+        elif endpoint == "balancesheet":
+            return ak.stock_financial_report_sina(stock=code6, symbol="资产负债表").head(4)
+        elif endpoint == "cashflow":
+            return ak.stock_financial_report_sina(stock=code6, symbol="现金流量表").head(4)
+        elif endpoint == "fina_indicator":
+            return ak.stock_financial_analysis_indicator(symbol=code6).head(8)
+        elif endpoint == "stk_holdertrade":
+            return ak.stock_hold_management_detail_em(symbol=code6).head(15)
+        elif endpoint == "stk_holdernumber":
+            return ak.stock_hold_num_cninfo(symbol=code6).head(8)
+        elif endpoint == "dividend":
+            return ak.stock_history_dividend_detail(symbol=code6, indicator="分红").head(8)
+    except Exception as e:
+        logger.debug("[_ak_fallback] %s %s: %s", endpoint, ts_code, e)
+    return _empty_df()
+
+
 def _get_df(endpoint: str, ts_code: str, fields: str, max_rows: int, **kwargs) -> pd.DataFrame:
     pro = get_pro()
-    if pro is None:
-        return _empty_df()
-    try:
-        fn = getattr(pro, endpoint)
-        df = _ts_call(lambda: fn(ts_code=ts_code, fields=fields, **kwargs))
-        return df.head(max_rows) if df is not None and not df.empty else _empty_df()
-    except Exception as exc:
-        logger.debug("[%s] %s: %s", endpoint, ts_code, exc)
-        return _empty_df()
+    if pro is not None:
+        try:
+            fn = getattr(pro, endpoint)
+            df = _ts_call(lambda: fn(ts_code=ts_code, fields=fields, **kwargs))
+            if df is not None and not df.empty:
+                return df.head(max_rows)
+        except Exception as exc:
+            logger.debug("[%s] tushare %s: %s", endpoint, ts_code, exc)
+
+    # akshare 兜底
+    df = _ak_fallback(endpoint, ts_code)
+    if not df.empty:
+        return df.head(max_rows)
+    return _empty_df()
 
 
 def get_income(ts_code: str) -> pd.DataFrame:
@@ -96,20 +130,28 @@ def get_fina_indicator(ts_code: str) -> pd.DataFrame:
 
 def get_fina_mainbz(ts_code: str) -> pd.DataFrame:
     pro = get_pro()
-    if pro is None:
-        return _empty_df()
-    try:
-        df = _ts_call(
-            lambda: pro.fina_mainbz(
-                ts_code=ts_code,
-                type="P",
-                fields="end_date,bz_item,bz_sales,bz_profit,bz_cost",
+    if pro is not None:
+        try:
+            df = _ts_call(
+                lambda: pro.fina_mainbz(
+                    ts_code=ts_code,
+                    type="P",
+                    fields="end_date,bz_item,bz_sales,bz_profit,bz_cost",
+                )
             )
-        )
-        return df.head(20) if df is not None and not df.empty else _empty_df()
+            if df is not None and not df.empty:
+                return df.head(20)
+        except Exception as exc:
+            logger.debug("[fina_mainbz] tushare %s: %s", ts_code, exc)
+    # akshare 兜底
+    try:
+        import akshare as ak
+        df = ak.stock_zygc_ym(symbol=_code6(ts_code))
+        if df is not None and not df.empty:
+            return df.head(20)
     except Exception as exc:
-        logger.debug("[fina_mainbz] %s: %s", ts_code, exc)
-        return _empty_df()
+        logger.debug("[fina_mainbz] akshare %s: %s", ts_code, exc)
+    return _empty_df()
 
 
 def get_share_float(ts_code: str) -> pd.DataFrame:
@@ -150,21 +192,29 @@ def get_stk_holdernumber(ts_code: str) -> pd.DataFrame:
 
 def get_block_trade(ts_code: str) -> pd.DataFrame:
     pro = get_pro()
-    if pro is None:
-        return _empty_df()
-    try:
-        df = _ts_call(
-            lambda: pro.block_trade(
-                ts_code=ts_code,
-                start_date=ndays_ago(90),
-                end_date=today(),
-                fields="trade_date,price,vol,amount,buyer,seller",
+    if pro is not None:
+        try:
+            df = _ts_call(
+                lambda: pro.block_trade(
+                    ts_code=ts_code,
+                    start_date=ndays_ago(90),
+                    end_date=today(),
+                    fields="trade_date,price,vol,amount,buyer,seller",
+                )
             )
-        )
-        return df.head(10) if df is not None and not df.empty else _empty_df()
+            if df is not None and not df.empty:
+                return df.head(10)
+        except Exception as exc:
+            logger.debug("[block_trade] tushare %s: %s", ts_code, exc)
+    # akshare 兜底
+    try:
+        import akshare as ak
+        df = ak.stock_dzjy_mdetail(symbol=_code6(ts_code))
+        if df is not None and not df.empty:
+            return df.head(10)
     except Exception as exc:
-        logger.debug("[block_trade] %s: %s", ts_code, exc)
-        return _empty_df()
+        logger.debug("[block_trade] akshare %s: %s", ts_code, exc)
+    return _empty_df()
 
 
 def get_dividend(ts_code: str) -> pd.DataFrame:

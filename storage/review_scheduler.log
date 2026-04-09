@@ -1,0 +1,15 @@
+2026-04-08 00:38:23,928 [scheduler_daemon] started, PID=72536, daily=19:30 + night learning
+2026-04-08 00:38:23,928 [scheduler_daemon] night round 2: AI learning
+2026-04-08 00:38:23,928 [scheduler_daemon] night r2 failed: ModuleNotFoundError("No module named 'knowledge'")
+Traceback (most recent call last):
+  File "C:\LinDangAgent\knowledge\scheduler.py", line 422, in _daemon_loop
+    from knowledge.night_learner import round2_ai_learn
+ModuleNotFoundError: No module named 'knowledge'
+2026-04-08 04:30:24,010 [scheduler_daemon] night round 3: report
+2026-04-08 04:30:24,010 [scheduler_daemon] night r3 failed: ModuleNotFoundError("No module named 'knowledge'")
+Traceback (most recent call last):
+  File "C:\LinDangAgent\knowledge\scheduler.py", line 435, in _daemon_loop
+    from knowledge.night_learner import round3_report
+ModuleNotFoundError: No module named 'knowledge'
+2026-04-08 07:48:25,018 [scheduler_daemon] started, PID=82988, daily=19:30 + night learning
+2026-04-08 08:23:29,262 [scheduler_daemon] started, PID=82816, daily=19:30 + night learning

@@ -137,14 +137,21 @@ def compute_technicals(df: pd.DataFrame) -> dict:
 def compute_quant_score(technicals: dict, pe: float = None,
                         pb: float = None, net_flow_wan: float = None,
                         volume_ratio: float = None,
-                        turnover_rate: float = None) -> dict:
+                        turnover_rate: float = None,
+                        industry_pe: float = None,
+                        industry_pb: float = None,
+                        total_mv_yi: float = None) -> dict:
+    """四维量化预评分（v3.0：行业相对估值+否决机制+加速赶顶检测+小盘软惩罚）"""
     tech_score = 50
     capital_score = 50
     valuation_score = 50
     momentum_score = 50
 
-    # ── 技术面分 ──
+    # ── 技术面分（含否决机制）──
     ma_state = technicals.get("均线状态", "")
+    macd_sig = technicals.get("MACD信号", "")
+    vol_state = technicals.get("量能状态", "")
+
     if ma_state == "多头排列":
         tech_score += 15
     elif ma_state == "空头排列":
@@ -159,7 +166,6 @@ def compute_quant_score(technicals: dict, pe: float = None,
         elif rsi < 30:
             tech_score -= 3
 
-    macd_sig = technicals.get("MACD信号", "")
     if macd_sig == "金叉":
         tech_score += 10
     elif macd_sig == "多头":
@@ -178,7 +184,6 @@ def compute_quant_score(technicals: dict, pe: float = None,
         elif boll_pos < 10:
             tech_score -= 3
 
-    vol_state = technicals.get("量能状态", "")
     if vol_state == "显著放量":
         tech_score += 8
     elif vol_state == "温和放量":
@@ -191,6 +196,13 @@ def compute_quant_score(technicals: dict, pe: float = None,
         tech_score += 8
     elif price_pos == "远离高位":
         tech_score -= 5
+
+    # ★ 否决机制：空头排列+MACD死叉/空头 → 锁死上限40
+    if ma_state == "空头排列" and macd_sig in ("死叉", "空头"):
+        tech_score = min(tech_score, 40)
+    # ★ 否决机制：空头排列+缩量 → 锁死上限45
+    if ma_state == "空头排列" and vol_state == "明显缩量":
+        tech_score = min(tech_score, 45)
 
     # ── 资金面分 ──
     if net_flow_wan is not None:
@@ -223,8 +235,25 @@ def compute_quant_score(technicals: dict, pe: float = None,
         elif turnover_rate > 25:
             capital_score -= 5
 
-    # ── 估值面分 ──
-    if pe is not None and pe > 0:
+    # ── 估值面分（v3.0：行业相对值优先，绝对值兜底）──
+    _pe_scored = False
+    if pe is not None and pe > 0 and industry_pe is not None and industry_pe > 0:
+        # 相对行业中位数的偏离度打分
+        pe_ratio = pe / industry_pe
+        if pe_ratio < 0.5:
+            valuation_score += 15   # 远低于行业
+        elif pe_ratio < 0.8:
+            valuation_score += 8    # 低于行业
+        elif pe_ratio < 1.2:
+            valuation_score += 3    # 行业中位附近
+        elif pe_ratio < 2.0:
+            valuation_score -= 5    # 高于行业
+        else:
+            valuation_score -= 12   # 远高于行业
+        _pe_scored = True
+
+    if not _pe_scored and pe is not None and pe > 0:
+        # 绝对值兜底（无行业基准时）
         if pe < 15:
             valuation_score += 15
         elif pe < 25:
@@ -235,7 +264,21 @@ def compute_quant_score(technicals: dict, pe: float = None,
             valuation_score -= 8
         else:
             valuation_score -= 15
-    if pb is not None and pb > 0:
+
+    _pb_scored = False
+    if pb is not None and pb > 0 and industry_pb is not None and industry_pb > 0:
+        pb_ratio = pb / industry_pb
+        if pb_ratio < 0.6:
+            valuation_score += 8
+        elif pb_ratio < 1.0:
+            valuation_score += 3
+        elif pb_ratio > 2.5:
+            valuation_score -= 8
+        elif pb_ratio > 1.5:
+            valuation_score -= 3
+        _pb_scored = True
+
+    if not _pb_scored and pb is not None and pb > 0:
         if pb < 1.5:
             valuation_score += 8
         elif pb < 3:
@@ -245,7 +288,14 @@ def compute_quant_score(technicals: dict, pe: float = None,
         elif pb > 5:
             valuation_score -= 3
 
-    # ── 动量分 ──
+    # ★ 小盘股软惩罚（替代硬过滤）
+    if total_mv_yi is not None and total_mv_yi > 0:
+        if total_mv_yi < 20:
+            valuation_score -= 10   # 极小盘，波动风险高
+        elif total_mv_yi < 30:
+            valuation_score -= 5    # 偏小盘
+
+    # ── 动量分（v3.0：增加加速赶顶检测）──
     chg_3 = technicals.get("近3日涨幅")
     chg_5 = technicals.get("近5日涨幅")
     chg_10 = technicals.get("近10日涨幅")
@@ -270,6 +320,11 @@ def compute_quant_score(technicals: dict, pe: float = None,
             momentum_score -= 5
         elif chg_20 < -15:
             momentum_score -= 10
+
+    # ★ 加速赶顶检测：近5日涨幅占近20日涨幅 >60%，说明末段加速
+    if chg_5 is not None and chg_20 is not None and chg_20 > 10:
+        if chg_5 / chg_20 > 0.6:
+            momentum_score -= 8  # 涨幅集中在最近几天，赶顶风险
 
     vol_ratio = technicals.get("量能比")
     if vol_ratio and chg_5 is not None:
@@ -304,6 +359,53 @@ def compute_quant_score(technicals: dict, pe: float = None,
         "量化总分": avg,
         "量化信号": signal,
     }
+
+
+def detect_kline_pattern(technicals: dict) -> str:
+    """识别K线形态标签，供Scout prompt注入"""
+    patterns = []
+    ma_state = technicals.get("均线状态", "")
+    macd_sig = technicals.get("MACD信号", "")
+    vol_state = technicals.get("量能状态", "")
+    price_pos = technicals.get("价格位置", "")
+    chg_3 = technicals.get("近3日涨幅", 0) or 0
+    chg_5 = technicals.get("近5日涨幅", 0) or 0
+    chg_20 = technicals.get("近20日涨幅", 0) or 0
+    rsi = technicals.get("RSI14", 50)
+    boll_pos = technicals.get("布林位置", 50)
+
+    # 放量突破
+    if vol_state in ("显著放量", "温和放量") and price_pos == "创近期新高" and macd_sig in ("金叉", "多头"):
+        patterns.append("放量突破新高")
+    # 缩量回踩
+    elif vol_state == "明显缩量" and ma_state == "多头排列" and -5 < chg_5 < 0:
+        patterns.append("缩量回踩均线")
+    # 底部反转
+    elif ma_state != "多头排列" and macd_sig == "金叉" and boll_pos < 30:
+        patterns.append("底部金叉反转")
+    # 高位滞涨
+    elif vol_state in ("显著放量", "温和放量") and abs(chg_3) < 1 and chg_20 > 20:
+        patterns.append("高位放量滞涨")
+    # 加速赶顶
+    elif chg_5 > 15 and chg_20 > 25:
+        patterns.append("加速赶顶")
+    # 弱势反弹
+    elif ma_state == "空头排列" and chg_3 > 2:
+        patterns.append("弱势反弹")
+    # 均线金叉
+    elif ma_state == "多头排列" and macd_sig in ("金叉", "多头"):
+        patterns.append("均线多头+MACD共振")
+
+    return "、".join(patterns) if patterns else "无明显形态"
+
+
+def check_volume_price_divergence(technicals: dict) -> bool:
+    """检测量价背离：近3日放量但价格重心下移 → 应剔除"""
+    vol_state = technicals.get("量能状态", "")
+    chg_3 = technicals.get("近3日涨幅")
+    if vol_state in ("显著放量", "温和放量") and chg_3 is not None and chg_3 < -2:
+        return True  # 放量下跌 = 量价背离
+    return False
 
 
 def format_technicals_text(technicals: dict) -> str:
@@ -352,3 +454,54 @@ def format_technicals_text(technicals: dict) -> str:
         lines.append(f"涨幅: {', '.join(chg_parts)}")
 
     return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# v3.0 新增：RPS 相对强度 + 市场环境动态调参
+# ══════════════════════════════════════════════════════════════════════════════
+
+def compute_rps(chg_20: float, all_market_chg_20: list) -> int:
+    """计算个股20日涨幅在全市场中的百分位排名 (0-100)
+
+    RPS=90 表示跑赢了90%的股票。
+    all_market_chg_20: 全A的20日涨幅列表（由调用方传入）
+    """
+    if not all_market_chg_20 or chg_20 is None:
+        return 50  # 默认中位
+    below = sum(1 for x in all_market_chg_20 if x < chg_20)
+    return round(below / len(all_market_chg_20) * 100)
+
+
+def adjust_scout_threshold(market_sentiment: str = "中性") -> int:
+    """根据市场环境动态调整 Scout 截断门槛
+
+    market_sentiment: "强势" / "中性" / "弱势" / "极弱"
+    返回：Scout 分数门槛（低于此分的不进入 Top20）
+    """
+    thresholds = {
+        "强势": 55,   # 牛市放宽，给更多机会
+        "中性": 60,   # 默认
+        "弱势": 68,   # 熊市收紧，只留最强
+        "极弱": 75,   # 极端行情只留确定性最高的
+    }
+    return thresholds.get(market_sentiment, 60)
+
+
+def detect_market_sentiment(index_chg_pct: float = None,
+                            advance_ratio: float = None) -> str:
+    """根据大盘涨跌幅和涨跌比判断市场情绪
+
+    index_chg_pct: 上证指数当日涨跌幅
+    advance_ratio: 上涨家数 / 总家数（0-1）
+    """
+    if index_chg_pct is None:
+        return "中性"
+
+    if index_chg_pct > 1.5 or (advance_ratio and advance_ratio > 0.7):
+        return "强势"
+    elif index_chg_pct > 0 or (advance_ratio and advance_ratio > 0.5):
+        return "中性"
+    elif index_chg_pct > -1.5:
+        return "弱势"
+    else:
+        return "极弱"

@@ -3,6 +3,10 @@
 import json
 import requests
 
+# 国内 API 专用 session，禁止走系统代理（Windows 注册表代理会干扰）
+_session = requests.Session()
+_session.trust_env = False
+
 
 def _build_request(cfg, messages, max_tokens, stream=False):
     """构建豆包 responses API 请求参数"""
@@ -43,7 +47,7 @@ def doubao_call(cfg, messages, max_tokens, _retry=0) -> tuple[str, str | None]:
     import time as _time
     url, headers, body = _build_request(cfg, messages, max_tokens, stream=False)
     try:
-        resp = requests.post(url, headers=headers, json=body, timeout=180)
+        resp = _session.post(url, headers=headers, json=body, timeout=180)
         resp.encoding = "utf-8"
         if resp.status_code != 200:
             # 429/503 → 重试一次
@@ -73,7 +77,7 @@ def doubao_stream(cfg, messages, max_tokens):
     """豆包流式 responses API 调用，yield 文本片段"""
     url, headers, body = _build_request(cfg, messages, max_tokens, stream=True)
     try:
-        resp = requests.post(url, headers=headers, json=body, timeout=180, stream=True)
+        resp = _session.post(url, headers=headers, json=body, timeout=180, stream=True)
         if resp.status_code != 200:
             resp.encoding = "utf-8"
             yield f"\n\n⚠️ 豆包 API 错误 {resp.status_code}：{resp.text[:150]}"

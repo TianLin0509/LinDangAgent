@@ -102,6 +102,23 @@ def save_report(
     return str(markdown_path)
 
 
+def list_reports(limit: int = 5) -> list[dict]:
+    """返回最近生成的研报列表（不含正文）。"""
+    init_db()
+    with _get_conn() as conn:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            """
+            SELECT report_id, stock_name, stock_code, summary, created_at
+            FROM reports
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def get_report(report_id: str) -> dict | None:
     init_db()
 

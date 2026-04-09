@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>/* 四野指挥部 · 抖音素材公共样式 */
+:root {
+    --primary: #c0392b;
+    --primary-light: #e74c3c;
+    --secondary: #2c3e50;
+    --bg-dark: #1a1a2e;
+    --bg-mid: #16213e;
+    --bg-deep: #0f3460;
+    --gold: #f39c12;
+    --gold-light: #f1c40f;
+    --danger: #e74c3c;
+    --safe: #27ae60;
+    --text-primary: #ecf0f1;
+    --text-secondary: #bdc3c7;
+    --text-muted: #7f8c8d;
+    --card-bg: rgba(255,255,255,0.06);
+    --card-border: rgba(255,255,255,0.1);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    width: 1080px;
+    height: 1920px;
+    overflow: hidden;
+    background: linear-gradient(180deg, var(--bg-dark) 0%, var(--bg-mid) 45%, var(--bg-deep) 100%);
+    font-family: "Microsoft YaHei", "SimHei", "PingFang SC", sans-serif;
+    color: var(--text-primary);
+    position: relative;
+}
+
+/* 军事网格背景 */
+body::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background-image:
+        linear-gradient(rgba(192,57,43,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(192,57,43,0.03) 1px, transparent 1px);
+    background-size: 60px 60px;
+    pointer-events: none;
+    z-index: 0;
+}
+
+body > * { position: relative; z-index: 1; }
+
+/* 标题区 */
+.header {
+    text-align: center;
+    padding: 60px 40px 30px;
+}
+
+.header .star {
+    font-size: 48px;
+    color: var(--primary);
+    text-shadow: 0 0 20px rgba(192,57,43,0.5);
+}
+
+.header .title {
+    font-size: 52px;
+    font-weight: 900;
+    letter-spacing: 6px;
+    color: var(--text-primary);
+    text-shadow: 0 2px 10px rgba(0,0,0,0.5);
+    margin-top: 12px;
+}
+
+.header .subtitle {
+    font-size: 28px;
+    color: var(--text-secondary);
+    margin-top: 8px;
+    letter-spacing: 2px;
+}
+
+/* 分隔线 */
+.divider {
+    width: 80%;
+    margin: 20px auto;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--primary), transparent);
+}
+
+/* 卡片 */
+.card {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 16px;
+    margin: 16px 40px;
+    padding: 24px 28px;
+    backdrop-filter: blur(10px);
+}
+
+/* 评级徽章 */
+.badge {
+    display: inline-block;
+    padding: 4px 16px;
+    border-radius: 20px;
+    font-size: 22px;
+    font-weight: 700;
+}
+.badge-attack { background: var(--primary); color: white; }
+.badge-recon { background: var(--gold); color: #1a1a2e; }
+.badge-retreat { background: #7f8c8d; color: white; }
+
+/* 评分条 */
+.score-bar-container {
+    display: flex;
+    align-items: center;
+    margin: 6px 0;
+}
+.score-bar-label {
+    width: 100px;
+    font-size: 20px;
+    color: var(--text-secondary);
+}
+.score-bar-track {
+    flex: 1;
+    height: 16px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 8px;
+    overflow: hidden;
+}
+.score-bar-fill {
+    height: 100%;
+    border-radius: 8px;
+    transition: width 0.3s;
+}
+.score-bar-value {
+    width: 60px;
+    text-align: right;
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--gold);
+}
+
+/* 底部信息 */
+.footer {
+    position: absolute;
+    bottom: 40px;
+    left: 0;
+    right: 0;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 20px;
+}
+
+.footer .brand {
+    color: var(--primary);
+    font-weight: 700;
+    font-size: 24px;
+}
+
+/* 排名数字 */
+.rank-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    font-size: 24px;
+    font-weight: 900;
+}
+.rank-1 { background: linear-gradient(135deg, #f39c12, #e67e22); color: #1a1a2e; }
+.rank-2 { background: linear-gradient(135deg, #bdc3c7, #95a5a6); color: #1a1a2e; }
+.rank-3 { background: linear-gradient(135deg, #e67e22, #d35400); color: white; }
+.rank-other { background: rgba(255,255,255,0.1); color: var(--text-secondary); }
+
+/* 雷达图（CSS 实现） */
+.radar-wrapper {
+    position: relative;
+    width: 280px;
+    height: 280px;
+    margin: 0 auto;
+}
+.radar-bg {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%;
+    height: 100%;
+}
+.radar-shape {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+}
+</style>
+<style>
+.page-title {
+    text-align: center;
+    padding: 60px 40px 20px;
+}
+.page-title h1 {
+    font-size: 48px;
+    font-weight: 900;
+}
+.page-title .sub {
+    font-size: 24px;
+    color: var(--text-muted);
+    margin-top: 8px;
+}
+
+.highlights-list {
+    margin: 20px 40px;
+}
+
+.hl-item {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 16px;
+    padding: 28px 32px;
+    margin-bottom: 16px;
+    border-left: 4px solid var(--primary);
+}
+
+.hl-item.top1 { border-left-color: var(--gold); }
+.hl-item.top2 { border-left-color: #bdc3c7; }
+.hl-item.top3 { border-left-color: #e67e22; }
+
+.hl-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+
+.hl-name {
+    font-size: 34px;
+    font-weight: 800;
+    color: var(--text-primary);
+}
+
+.hl-score {
+    font-size: 34px;
+    font-weight: 900;
+    color: var(--gold);
+}
+
+.hl-meta {
+    font-size: 20px;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+}
+
+.hl-summary {
+    font-size: 24px;
+    line-height: 1.7;
+    color: var(--text-secondary);
+}
+</style>
+</head>
+<body>
+<div class="page-title">
+    <h1>★ 今日战场要点</h1>
+    <div class="sub">2026-04-05 · 关键结论速览</div>
+</div>
+
+<div class="divider"></div>
+
+<div class="highlights-list">
+
+    <div class="hl-item top1">
+        <div class="hl-header">
+            <span class="hl-name">中际旭创</span>
+            <span class="hl-score">8.55</span>
+        </div>
+        <div class="hl-meta">
+            300308 · 通信设备
+            
+             ·
+            
+            <span class="badge badge-attack" style="font-size:18px; padding:2px 12px;">总攻信号</span>
+            
+            
+        </div>
+        <div class="hl-summary">中际旭创目前获得8.5分总攻信号，评级为值得发起总攻。公司作为AI算力核心底座的绝对中军，2025年净利润增长108.78%且现金流充沛，基本面极其强悍。当前主攻方向为1.6T高端光模块的量产红利及2026年一季报业绩超预期。战术建议为采用</div>
+    </div>
+
+    <div class="hl-item top2">
+        <div class="hl-header">
+            <span class="hl-name">亨通光电</span>
+            <span class="hl-score">8.45</span>
+        </div>
+        <div class="hl-meta">
+            600487 · 通信设备
+            
+        </div>
+        <div class="hl-summary">亨通光电综合得分为8.25分，触发总攻信号。该股当前核心炒作题材已提纯为AI空芯光纤与全球海洋能源工程，具备极强的S级逻辑支撑。最新成交量与均线形态确认了主升浪的开启，虽然短期技术位稍高，但趋势动能极其强悍。主攻方向为四月下旬业绩披露带来的</div>
+    </div>
+
+    <div class="hl-item top3">
+        <div class="hl-header">
+            <span class="hl-name">罗博特科</span>
+            <span class="hl-score">8.45</span>
+        </div>
+        <div class="hl-meta">
+            300757 · 专用机械
+            
+        </div>
+        <div class="hl-summary">该股综合得分8.25分，获总攻信号评级。罗博特科作为AI光芯片封装设备的核心中军，主攻方向为ficonTEC资产重组带来的CPO设备国产化溢价。2025年年报亏损利空已在前期底部出尽，4月3日的放量大阳线确立了中线加速趋势。战术建议为利用股</div>
+    </div>
+
+    <div class="hl-item ">
+        <div class="hl-header">
+            <span class="hl-name">美的集团</span>
+            <span class="hl-score">8.25</span>
+        </div>
+        <div class="hl-meta">
+            000333 · 家用电器
+            
+             ·
+            
+            <span class="badge badge-attack" style="font-size:18px; padding:2px 12px;">总攻信号（综合评分：8.25）</span>
+            
+            
+        </div>
+        <div class="hl-summary">美的集团当前综合评分为8.25分(总攻信号)。标的属于典型的基本面锚定、政策面催化的中线价值投机品种。主攻方向为国家级以旧换新红利、130亿元巨额回购预期以及B端机器人业务的估值重估。战术建议为依托75.80元均线支撑区进行三三制分批布局。</div>
+    </div>
+
+    <div class="hl-item ">
+        <div class="hl-header">
+            <span class="hl-name">招商轮船</span>
+            <span class="hl-score">8.25</span>
+        </div>
+        <div class="hl-meta">
+            601872 · 水运
+            
+             ·
+            
+            <span class="badge badge-attack" style="font-size:18px; padding:2px 12px;">总攻信号（综合评分：8.25）</span>
+            
+            
+        </div>
+        <div class="hl-summary">综合得分为8.25分，触发总攻信号。招商轮船目前处于航运超级周期与地缘政治红利叠加的共振期，主攻方向为油运景气周期带来的业绩超预期爆发。一季度预计净利润最高达32.5亿元，同比激增逾270%，为股价提供了坚实的估值支撑。战术建议为三三制滚动</div>
+    </div>
+
+</div>
+
+<div class="footer">
+    <span class="brand">林铛Agent</span> · 四野指挥部
+</div>
+</body>
+</html>

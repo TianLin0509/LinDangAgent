@@ -3,7 +3,7 @@
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
 
-from core.ai_client import get_ai_client
+from ai.client import get_ai_client
 from config import MODEL_NAMES
 
 print("测试 AI 客户端初始化...")

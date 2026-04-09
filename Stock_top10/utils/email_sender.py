@@ -1,22 +1,8 @@
-"""邮件工具 — 精简版（仅 smtp_configured + _get_smtp_config + _md_to_html_simple）"""
+"""邮件工具 — 代理到主项目统一模块。"""
 
 import re
 
-from core.secrets_compat import _get_secret
-
-
-def _get_smtp_config() -> tuple[str, int, str, str]:
-    return (
-        _get_secret("SMTP_HOST", ""),
-        int(_get_secret("SMTP_PORT", "465")),
-        _get_secret("SMTP_USER", ""),
-        _get_secret("SMTP_PASS", ""),
-    )
-
-
-def smtp_configured() -> bool:
-    host, _, user, pwd = _get_smtp_config()
-    return bool(host and user and pwd)
+from utils.email_sender import smtp_configured, _get_smtp_config, send_text_email, send_html_email, send_image_email  # noqa: F401
 
 
 def _md_to_html_simple(md: str) -> str:

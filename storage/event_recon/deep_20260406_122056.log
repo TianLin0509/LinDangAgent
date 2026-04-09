@@ -1,0 +1,233 @@
+[event_deep] 启动: 鹏鼎控股,宜安科技,领益智造,蓝思科技,东山精密, preset=gemini
+[event_deep] [1/5] 指挥部分析: 鹏鼎控股
+2026-04-06 12:20:57,660 [war_room] 阵容: 全 Gemini 阵容（免费） — 将领['🔮 Gemini CLI（免费）', '🔮 Gemini CLI（免费）', '🔮 Gemini CLI（免费）'], 刘亚楼🔮 Gemini CLI（免费）, 林彪🔮 Gemini CLI（免费）
+2026-04-06 12:20:57,660 [war_room] Phase 0: 侦察科情报采集 — 鹏鼎控股
+2026-04-06 12:20:57,666 [load_stock_list] loaded local csv with encoding=utf-8 rows=5489
+2026-04-06 12:20:58,031 [stock_sentiment] 鹏鼎控股 东财股吧: 0 条
+2026-04-06 12:21:04,062 [load_stock_list] loaded local csv with encoding=utf-8 rows=5489
+  0%|          | 0/2 [00:00<?, ?it/s] 50%|█████     | 1/2 [00:00<00:00,  4.04it/s]100%|██████████| 2/2 [00:00<00:00,  3.91it/s]                                             2026-04-06 12:21:04,872 [get_research_reports] 东方财富研报获取成功: 8条
+2026-04-06 12:21:37,691 [stock_sentiment] 鹏鼎控股 short: xq=0 em=0 filtered=0 selected=0
+2026-04-06 12:21:37,691 [stock_sentiment] 鹏鼎控股 short: 0 posts → 中性(低)
+2026-04-06 12:21:38,044 [stock_sentiment] 鹏鼎控股 东财股吧: 0 条
+2026-04-06 12:21:39,506 [war_room] Phase 1: 3 位将领差异化并行分析
+2026-04-06 12:21:39,508 [gemini_cli] calling gemini CLI, prompt 3216 chars → file C:/Users/lintian/AppData/Local/Temp/lindang_prompt_ietx6bp9.md
+2026-04-06 12:21:39,508 [gemini_cli] calling gemini CLI, prompt 3332 chars → file C:/Users/lintian/AppData/Local/Temp/lindang_prompt_34su2nwq.md
+2026-04-06 12:21:39,508 [gemini_cli] calling gemini CLI, prompt 2713 chars → file C:/Users/lintian/AppData/Local/Temp/lindang_prompt_yithu9ak.md
+2026-04-06 12:22:17,699 [stock_sentiment] 鹏鼎控股 mid: xq=0 em=0 filtered=0 selected=0
+2026-04-06 12:22:17,699 [stock_sentiment] 鹏鼎控股 mid: 0 posts → 中性(低)
+2026-04-06 12:22:18,233 [stock_sentiment] 鹏鼎控股 东财热度: 东财投资意愿：49.0（5日均49.9，趋势下降）
+2026-04-06 12:23:33,267 [gemini_cli] model=gemini-2.5-flash-lite input=5744 output=107
+2026-04-06 12:23:33,267 [gemini_cli] model=gemini-3-flash-preview input=37542 output=2885
+2026-04-06 12:23:49,471 [gemini_cli] model=gemini-2.5-flash-lite input=5285 output=126
+2026-04-06 12:23:49,472 [gemini_cli] model=gemini-3-flash-preview input=34442 output=4018
+2026-04-06 12:24:24,769 [gemini_cli] model=gemini-2.5-flash-lite input=5677 output=122
+2026-04-06 12:24:24,769 [gemini_cli] model=gemini-3-flash-preview input=56296 output=4762
+2026-04-06 12:24:24,771 [war_room] 将领A 完成，综合分: 78.9
+2026-04-06 12:24:24,771 [war_room] 将领B 完成，综合分: 78.9
+2026-04-06 12:24:24,771 [war_room] 将领C 完成，综合分: 80.0
+2026-04-06 12:24:24,772 [war_room] Phase 2: 追加侦察 — 3 条共性需求
+2026-04-06 12:24:24,772 [gemini_cli] calling gemini CLI, prompt 147 chars → file C:/Users/lintian/AppData/Local/Temp/lindang_prompt_hc2zso7t.md
+2026-04-06 12:25:59,908 There was an error managing chromedriver (error decoding response body); using driver found in the cache
+2026-04-06 12:25:59,908 Error sending stats to Plausible: error sending request for url (https://plausible.io/api/event)
+2026-04-06 12:26:03,103 [gemini_cli] model=gemini-2.5-flash-lite input=3238 output=74
+2026-04-06 12:26:03,103 [gemini_cli] model=gemini-3-flash-preview input=35295 output=2879
+2026-04-06 12:26:03,103 [war_room] Phase 3: 参谋长刘亚楼汇总
+2026-04-06 12:26:03,105 [gemini_cli] calling gemini CLI, prompt 4268 chars → file C:/Users/lintian/AppData/Local/Temp/lindang_prompt_8tabzy2y.md
+2026-04-06 12:26:04,100 [xueqiu_radar] Chrome driver initialized
+2026-04-06 12:26:04,816 Connection pool is full, discarding connection: localhost. Connection pool size: 1
+2026-04-06 12:26:05,021 Connection pool is full, discarding connection: localhost. Connection pool size: 1
+2026-04-06 12:26:05,129 Connection pool is full, discarding connection: localhost. Connection pool size: 1
+2026-04-06 12:26:06,994 Connection pool is full, discarding connection: localhost. Connection pool size: 1
+2026-04-06 12:26:08,526 Connection pool is full, discarding connection: localhost. Connection pool size: 1
+2026-04-06 12:27:02,810 [war_room] Phase 4: 司令员林彪独立判断（🔮 Gemini CLI（免费））
+2026-04-06 12:27:02,811 [gemini_cli] calling gemini CLI, prompt 2881 chars → file C:/Users/lintian/AppData/Local/Temp/lindang_prompt_ftxo47a_.md
+2026-04-06 12:29:47,001 [gemini_cli] model=gemini-2.5-flash-lite input=5407 output=163
+2026-04-06 12:29:47,001 [gemini_cli] model=gemini-3-flash-preview input=20507 output=2149
+2026-04-06 12:29:47,002 [war_room] Phase 5: 组装战报并保存
+2026-04-06 12:29:47,012 [war_room] 完成: 鹏鼎控股 综合 82.2
+2026-04-06 12:29:47,983 [war_room] email sent: 【指挥部战报】鹏鼎控股 82.2分 总攻信号
+[event_deep] [1/5] 鹏鼎控股 完成: 82.2分 总攻信号
+[event_deep] [2/5] 指挥部分析: 宜安科技
+2026-04-06 12:29:47,983 [war_room] 阵容: 全 Gemini 阵容（免费） — 将领['🔮 Gemini CLI（免费）', '🔮 Gemini CLI（免费）', '🔮 Gemini CLI（免费）'], 刘亚楼🔮 Gemini CLI（免费）, 林彪🔮 Gemini CLI（免费）
+2026-04-06 12:29:47,983 [war_room] Phase 0: 侦察科情报采集 — 宜安科技
+2026-04-06 12:29:47,989 [load_stock_list] loaded local csv with encoding=utf-8 rows=5489
+2026-04-06 12:29:48,468 [stock_sentiment] 宜安科技 东财股吧: 0 条
+2026-04-06 12:29:49,212 Connection pool is full, discarding connection: localhost. Connection pool size: 1
+2026-04-06 12:29:53,130 [stock_sentiment] 宜安科技 short: xq=56 em=0 filtered=5 selected=5
+2026-04-06 12:29:54,060 HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-04-06 12:29:54,276 [load_stock_list] loaded local csv with encoding=utf-8 rows=5489
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:00<00:00,  4.38it/s]                                             2026-04-06 12:29:55,043 [get_research_reports] 全部路线失败: 300328.SZ
+2026-04-06 12:30:00,137 [stock_sentiment] 宜安科技 short: 5 posts → 偏多(中)
+2026-04-06 12:30:00,419 [stock_sentiment] 宜安科技 东财股吧: 0 条
+2026-04-06 12:30:08,176 [stock_sentiment] 宜安科技 mid: xq=96 em=0 filtered=4 selected=4
+2026-04-06 12:30:09,052 HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-04-06 12:30:12,533 [stock_sentiment] 宜安科技 mid: 4 posts → 中性(低)
+2026-04-06 12:30:13,029 [stock_sentiment] 宜安科技 东财热度: 东财投资意愿：50.1（5日均47.7，趋势上升）
+2026-04-06 12:30:13,029 [war_room] Phase 1: 3 位将领差异化并行分析
+2026-04-06 12:30:13,030 [gemini_cli] calling gemini CLI, prompt 3765 chars → file C:/Users/lintian/AppData/Local/Temp/lindang_prompt_myopvlsv.md
+2026-04-06 12:30:13,030 [gemini_cli] calling gemini CLI, prompt 2679 chars → file C:/Users/lintian/AppData/Local/Temp/lindang_prompt_oiwknylm.md
+2026-04-06 12:30:13,030 [gemini_cli] calling gemini CLI, prompt 3251 chars → file C:/Users/lintian/AppData/Local/Temp/lindang_prompt_83j_eanv.md
+2026-04-06 12:33:30,426 [gemini_cli] model=gemini-2.5-flash-lite input=5709 output=125
+2026-04-06 12:33:30,426 [gemini_cli] model=gemini-3-flash-preview input=49031 output=4488
+2026-04-06 12:34:01,702 [gemini_cli] model=gemini-2.5-flash-lite input=5243 output=165
+2026-04-06 12:34:01,702 [gemini_cli] model=gemini-3-flash-preview input=33554 output=3059
+2026-04-06 12:34:17,152 [gemini_cli] model=gemini-2.5-flash-lite input=6101 output=154
+2026-04-06 12:34:17,152 [gemini_cli] model=gemini-3-flash-preview input=52582 output=4773
+2026-04-06 12:34:17,154 [war_room] 将领A 完成，综合分: 83.5
+2026-04-06 12:34:17,154 [war_room] 将领B 完成，综合分: 68.7
+2026-04-06 12:34:17,154 [war_room] 将领C 完成，综合分: 78.7
+2026-04-06 12:34:17,154 [war_room] Phase 2: 追加侦察 — 3 条共性需求
+2026-04-06 12:34:17,155 [gemini_cli] calling gemini CLI, prompt 151 chars → file C:/Users/lintian/AppData/Local/Temp/lindang_prompt_7obiu4q3.md
+2026-04-06 12:35:05,993 [gemini_cli] model=gemini-2.5-flash-lite input=3244 output=65
+2026-04-06 12:35:05,993 [gemini_cli] model=gemini-3-flash-preview input=8908 output=153
+2026-04-06 12:35:05,994 [war_room] Phase 3: 参谋长刘亚楼汇总
+2026-04-06 12:35:05,994 [gemini_cli] calling gemini CLI, prompt 4166 chars → file C:/Users/lintian/AppData/Local/Temp/lindang_prompt_3vs37ke6.md
+2026-04-06 12:38:15,475 [gemini_cli] model=gemini-2.5-flash-lite input=6361 output=104
+2026-04-06 12:38:15,475 [gemini_cli] model=gemini-3-flash-preview input=12025 output=658
+2026-04-06 12:38:15,476 [war_room] Phase 4: 司令员林彪独立判断（🔮 Gemini CLI（免费））
+2026-04-06 12:38:15,476 [gemini_cli] calling gemini CLI, prompt 3167 chars → file C:/Users/lintian/AppData/Local/Temp/lindang_prompt_2gyi6yul.md
+2026-04-06 12:43:01,980 [gemini_cli] model=gemini-2.5-flash-lite input=5641 output=109
+2026-04-06 12:43:01,980 [gemini_cli] model=gemini-3-flash-preview input=39674 output=5365
+2026-04-06 12:43:01,980 [war_room] Phase 5: 组装战报并保存
+2026-04-06 12:43:01,990 [war_room] 完成: 宜安科技 综合 76.8
+2026-04-06 12:43:02,980 [war_room] email sent: 【指挥部战报】宜安科技 76.8分 总攻信号
+[event_deep] [2/5] 宜安科技 完成: 76.8分 总攻信号
+[event_deep] [3/5] 指挥部分析: 领益智造
+2026-04-06 12:43:02,980 [war_room] 阵容: 全 Gemini 阵容（免费） — 将领['🔮 Gemini CLI（免费）', '🔮 Gemini CLI（免费）', '🔮 Gemini CLI（免费）'], 刘亚楼🔮 Gemini CLI（免费）, 林彪🔮 Gemini CLI（免费）
+2026-04-06 12:43:02,980 [war_room] Phase 0: 侦察科情报采集 — 领益智造
+2026-04-06 12:43:02,986 [load_stock_list] loaded local csv with encoding=utf-8 rows=5489
+2026-04-06 12:43:03,348 [stock_sentiment] 领益智造 东财股吧: 0 条
+2026-04-06 12:43:04,220 Connection pool is full, discarding connection: localhost. Connection pool size: 1
+2026-04-06 12:43:07,957 [stock_sentiment] 领益智造 short: xq=57 em=0 filtered=5 selected=5
+2026-04-06 12:43:08,639 HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-04-06 12:43:09,171 [load_stock_list] loaded local csv with encoding=utf-8 rows=5489
+  0%|          | 0/1 [00:00<?, ?it/s]100%|██████████| 1/1 [00:00<00:00,  4.38it/s]                                             2026-04-06 12:43:09,667 [get_research_reports] 东方财富研报获取成功: 8条
+2026-04-06 12:43:11,998 [stock_sentiment] 领益智造 short: 5 posts → 中性(低)
+2026-04-06 12:43:12,287 [stock_sentiment] 领益智造 东财股吧: 0 条
+2026-04-06 12:43:12,664 Connection pool is full, discarding connection: localhost. Connection pool size: 1
+2026-04-06 12:43:15,865 Connection pool is full, discarding connection: localhost. Connection pool size: 1
+2026-04-06 12:43:17,798 Connection pool is full, discarding connection: localhost. Connection pool size: 1
+2026-04-06 12:43:20,447 [stock_sentiment] 领益智造 mid: xq=95 em=0 filtered=14 selected=14
+2026-04-06 12:43:21,152 HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-04-06 12:43:27,112 [stock_sentiment] 领益智造 mid: 14 posts → 偏多(中)
+2026-04-06 12:43:27,561 [stock_sentiment] 领益智造 东财热度: 东财投资意愿：46.3（5日均43.8，趋势上升）
+2026-04-06 12:43:29,643 [war_room] Phase 1: 3 位将领差异化并行分析
+2026-04-06 12:43:29,654 [gemini_cli] calling gemini CLI, prompt 3090 chars → file C:/Users/lintian/AppData/Local/Temp/lindang_prompt_h3vm4hm6.md
+2026-04-06 12:43:29,654 [gemini_cli] calling gemini CLI, prompt 3358 chars → file C:/Users/lintian/AppData/Local/Temp/lindang_prompt_oq1kfz1_.md
+2026-04-06 12:43:29,654 [gemini_cli] calling gemini CLI, prompt 3196 chars → file C:/Users/lintian/AppData/Local/Temp/lindang_prompt_9fxgi8da.md
+2026-04-06 12:44:53,677 [gemini_cli] model=gemini-2.5-flash-lite input=5661 output=112
+2026-04-06 12:44:53,677 [gemini_cli] model=gemini-3-flash-preview input=38478 output=5274
+2026-04-06 12:45:56,738 [gemini_cli] model=gemini-2.5-flash-lite input=5551 output=100
+2026-04-06 12:45:56,738 [gemini_cli] model=gemini-3-flash-preview input=46072 output=4009
+2026-04-06 12:45:56,739 [war_room] 将领A 完成，综合分: 83.4
+2026-04-06 12:48:28,232 [gemini_cli] model=gemini-2.5-flash-lite input=5760 output=119
+2026-04-06 12:48:28,232 [gemini_cli] model=gemini-3-flash-preview input=108640 output=5258
+2026-04-06 12:48:28,232 [war_room] 将领B 完成，综合分: 78.8
+2026-04-06 12:48:28,232 [war_room] 将领C 完成，综合分: 78.9
+2026-04-06 12:48:28,233 [war_room] Phase 2: 追加侦察 — 3 条共性需求
+2026-04-06 12:48:28,233 [gemini_cli] calling gemini CLI, prompt 146 chars → file C:/Users/lintian/AppData/Local/Temp/lindang_prompt_hqsuwoh2.md
+2026-04-06 12:51:53,341 [gemini_cli] model=gemini-2.5-flash-lite input=3232 output=74
+2026-04-06 12:51:53,341 [gemini_cli] model=gemini-3-flash-preview input=39121 output=2052
+2026-04-06 12:51:53,342 [war_room] Phase 3: 参谋长刘亚楼汇总
+2026-04-06 12:51:53,342 [gemini_cli] calling gemini CLI, prompt 4231 chars → file C:/Users/lintian/AppData/Local/Temp/lindang_prompt_3sn13nt1.md
+2026-04-06 12:52:59,728 [gemini_cli] model=gemini-2.5-flash-lite input=6345 output=105
+2026-04-06 12:52:59,728 [gemini_cli] model=gemini-3-flash-preview input=12009 output=617
+2026-04-06 12:52:59,728 [war_room] Phase 4: 司令员林彪独立判断（🔮 Gemini CLI（免费））
+2026-04-06 12:52:59,729 [gemini_cli] calling gemini CLI, prompt 3715 chars → file C:/Users/lintian/AppData/Local/Temp/lindang_prompt_bv7w6bax.md
+2026-04-06 12:54:20,361 [gemini_cli] model=gemini-2.5-flash-lite input=6032 output=178
+2026-04-06 12:54:20,362 [gemini_cli] model=gemini-3.1-pro-preview input=11696 output=1406
+2026-04-06 12:54:20,362 [war_room] Phase 5: 组装战报并保存
+2026-04-06 12:54:20,373 [war_room] 完成: 领益智造 综合 82.5
+2026-04-06 12:54:21,298 [war_room] email sent: 【指挥部战报】领益智造 82.5分 总攻信号
+[event_deep] [3/5] 领益智造 完成: 82.5分 总攻信号
+[event_deep] [4/5] 指挥部分析: 蓝思科技
+2026-04-06 12:54:21,299 [war_room] 阵容: 全 Gemini 阵容（免费） — 将领['🔮 Gemini CLI（免费）', '🔮 Gemini CLI（免费）', '🔮 Gemini CLI（免费）'], 刘亚楼🔮 Gemini CLI（免费）, 林彪🔮 Gemini CLI（免费）
+2026-04-06 12:54:21,299 [war_room] Phase 0: 侦察科情报采集 — 蓝思科技
+2026-04-06 12:54:21,304 [load_stock_list] loaded local csv with encoding=utf-8 rows=5489
+2026-04-06 12:54:21,679 [stock_sentiment] 蓝思科技 东财股吧: 0 条
+2026-04-06 12:54:22,840 Connection pool is full, discarding connection: localhost. Connection pool size: 1
+2026-04-06 12:54:27,428 [stock_sentiment] 蓝思科技 short: xq=56 em=0 filtered=13 selected=13
+2026-04-06 12:54:27,998 [load_stock_list] loaded local csv with encoding=utf-8 rows=5489
+2026-04-06 12:54:28,198 HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+  0%|          | 0/2 [00:00<?, ?it/s] 50%|█████     | 1/2 [00:00<00:00,  3.84it/s]100%|██████████| 2/2 [00:00<00:00,  3.69it/s]                                             2026-04-06 12:54:28,829 [get_research_reports] 东方财富研报获取成功: 8条
+2026-04-06 12:54:34,173 [stock_sentiment] 蓝思科技 short: 13 posts → 偏多(中)
+2026-04-06 12:54:34,487 [stock_sentiment] 蓝思科技 东财股吧: 0 条
+2026-04-06 12:54:42,565 [stock_sentiment] 蓝思科技 mid: xq=92 em=0 filtered=15 selected=15
+2026-04-06 12:54:43,291 HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-04-06 12:54:49,534 [stock_sentiment] 蓝思科技 mid: 15 posts → 偏多(中)
+2026-04-06 12:54:49,989 [stock_sentiment] 蓝思科技 东财热度: 东财投资意愿：49.7（5日均46.0，趋势上升）
+2026-04-06 12:54:49,989 [war_room] Phase 1: 3 位将领差异化并行分析
+2026-04-06 12:54:49,990 [gemini_cli] calling gemini CLI, prompt 3909 chars → file C:/Users/lintian/AppData/Local/Temp/lindang_prompt_1ovi9k9y.md
+2026-04-06 12:54:49,990 [gemini_cli] calling gemini CLI, prompt 3325 chars → file C:/Users/lintian/AppData/Local/Temp/lindang_prompt_qo35_l6i.md
+2026-04-06 12:54:49,990 [gemini_cli] calling gemini CLI, prompt 3400 chars → file C:/Users/lintian/AppData/Local/Temp/lindang_prompt_6i4zhifk.md
+2026-04-06 12:57:12,197 [gemini_cli] model=gemini-2.5-flash-lite input=5805 output=120
+2026-04-06 12:57:12,197 [gemini_cli] model=gemini-3-flash-preview input=46751 output=4341
+2026-04-06 12:57:36,883 [gemini_cli] model=gemini-2.5-flash-lite input=5733 output=143
+2026-04-06 12:57:36,883 [gemini_cli] model=gemini-3-flash-preview input=30411 output=2171
+2026-04-06 12:57:53,000 [gemini_cli] model=gemini-2.5-flash-lite input=6204 output=107
+2026-04-06 12:57:53,000 [gemini_cli] model=gemini-3-flash-preview input=101236 output=5689
+2026-04-06 12:57:53,000 [war_room] 将领A 完成，综合分: 79.4
+2026-04-06 12:57:53,000 [war_room] 将领B 完成，综合分: 80.8
+2026-04-06 12:57:53,000 [war_room] 将领C 完成，综合分: 86.5
+2026-04-06 12:57:53,001 [war_room] Phase 2: 追加侦察 — 3 条共性需求
+2026-04-06 12:57:53,001 [gemini_cli] calling gemini CLI, prompt 143 chars → file C:/Users/lintian/AppData/Local/Temp/lindang_prompt_md38ygps.md
+2026-04-06 13:00:03,027 [gemini_cli] model=gemini-2.5-flash-lite input=3235 output=113
+2026-04-06 13:00:03,027 [gemini_cli] model=gemini-3-flash-preview input=46144 output=2090
+2026-04-06 13:00:03,029 [war_room] Phase 3: 参谋长刘亚楼汇总
+2026-04-06 13:00:03,029 [gemini_cli] calling gemini CLI, prompt 4521 chars → file C:/Users/lintian/AppData/Local/Temp/lindang_prompt_z92tdmsv.md
+2026-04-06 13:02:15,545 [gemini_cli] model=gemini-2.5-flash-lite input=6550 output=110
+2026-04-06 13:02:15,546 [gemini_cli] model=gemini-3-flash-preview input=12214 output=653
+2026-04-06 13:02:15,546 [war_room] Phase 4: 司令员林彪独立判断（🔮 Gemini CLI（免费））
+2026-04-06 13:02:15,547 [gemini_cli] calling gemini CLI, prompt 3717 chars → file C:/Users/lintian/AppData/Local/Temp/lindang_prompt_slth5dv3.md
+2026-04-06 13:03:39,899 [gemini_cli] model=gemini-2.5-flash-lite input=6067 output=188
+2026-04-06 13:03:39,899 [gemini_cli] model=gemini-3-flash-preview input=11731 output=1227
+2026-04-06 13:03:39,899 [war_room] Phase 5: 组装战报并保存
+2026-04-06 13:03:39,916 [war_room] 完成: 蓝思科技 综合 82.7
+2026-04-06 13:03:40,792 [war_room] email sent: 【指挥部战报】蓝思科技 82.7分 总攻信号
+[event_deep] [4/5] 蓝思科技 完成: 82.7分 总攻信号
+[event_deep] [5/5] 指挥部分析: 东山精密
+2026-04-06 13:03:40,792 [war_room] 阵容: 全 Gemini 阵容（免费） — 将领['🔮 Gemini CLI（免费）', '🔮 Gemini CLI（免费）', '🔮 Gemini CLI（免费）'], 刘亚楼🔮 Gemini CLI（免费）, 林彪🔮 Gemini CLI（免费）
+2026-04-06 13:03:40,792 [war_room] Phase 0: 侦察科情报采集 — 东山精密
+2026-04-06 13:03:40,798 [load_stock_list] loaded local csv with encoding=utf-8 rows=5489
+2026-04-06 13:03:41,176 [stock_sentiment] 东山精密 东财股吧: 0 条
+2026-04-06 13:03:42,298 Connection pool is full, discarding connection: localhost. Connection pool size: 1
+2026-04-06 13:03:46,825 [stock_sentiment] 东山精密 short: xq=58 em=0 filtered=16 selected=16
+2026-04-06 13:03:47,258 [load_stock_list] loaded local csv with encoding=utf-8 rows=5489
+  0%|          | 0/2 [00:00<?, ?it/s]2026-04-06 13:03:47,626 HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+ 50%|█████     | 1/2 [00:00<00:00,  4.32it/s]100%|██████████| 2/2 [00:00<00:00,  4.05it/s]                                             2026-04-06 13:03:48,069 [get_research_reports] 东方财富研报获取成功: 8条
+2026-04-06 13:03:55,254 [stock_sentiment] 东山精密 short: 16 posts → 偏多(中)
+2026-04-06 13:03:55,636 [stock_sentiment] 东山精密 东财股吧: 0 条
+2026-04-06 13:03:56,090 Connection pool is full, discarding connection: localhost. Connection pool size: 1
+2026-04-06 13:04:03,432 [stock_sentiment] 东山精密 mid: xq=97 em=0 filtered=31 selected=31
+2026-04-06 13:04:04,125 HTTP Request: POST https://api.deepseek.com/chat/completions "HTTP/1.1 200 OK"
+2026-04-06 13:04:11,796 [stock_sentiment] 东山精密 mid: 31 posts → 偏多(中)
+2026-04-06 13:04:12,252 [stock_sentiment] 东山精密 东财热度: 东财投资意愿：50.1（5日均49.5，趋势上升）
+2026-04-06 13:04:12,252 [war_room] Phase 1: 3 位将领差异化并行分析
+2026-04-06 13:04:12,252 [gemini_cli] calling gemini CLI, prompt 4034 chars → file C:/Users/lintian/AppData/Local/Temp/lindang_prompt_dvjdxavy.md
+2026-04-06 13:04:12,252 [gemini_cli] calling gemini CLI, prompt 3354 chars → file C:/Users/lintian/AppData/Local/Temp/lindang_prompt_ap74irel.md
+2026-04-06 13:04:12,252 [gemini_cli] calling gemini CLI, prompt 3531 chars → file C:/Users/lintian/AppData/Local/Temp/lindang_prompt_w78ad41b.md
+2026-04-06 13:07:15,401 [gemini_cli] model=gemini-2.5-flash-lite input=5756 output=146
+2026-04-06 13:07:15,401 [gemini_cli] model=gemini-3-flash-preview input=29410 output=3267
+2026-04-06 13:08:56,701 [gemini_cli] model=gemini-2.5-flash-lite input=6309 output=91
+2026-04-06 13:08:56,701 [gemini_cli] model=gemini-3-flash-preview input=29486 output=3566
+2026-04-06 13:08:56,702 [war_room] 将领A 完成，综合分: 84.1
+2026-04-06 13:08:56,702 [war_room] 将领B 完成，综合分: 81.2
+2026-04-06 13:09:11,802 [gemini_cli] model=gemini-2.5-flash-lite input=5916 output=89
+2026-04-06 13:09:11,802 [gemini_cli] model=gemini-3-flash-preview input=72046 output=3013
+2026-04-06 13:09:11,802 [war_room] 将领C 完成，综合分: 86.2
+2026-04-06 13:09:11,803 [war_room] Phase 2: 追加侦察 — 3 条共性需求
+2026-04-06 13:09:11,803 [gemini_cli] calling gemini CLI, prompt 151 chars → file C:/Users/lintian/AppData/Local/Temp/lindang_prompt_ny5z66p8.md
+2026-04-06 13:11:07,976 [gemini_cli] model=gemini-2.5-flash-lite input=3225 output=79
+2026-04-06 13:11:07,976 [gemini_cli] model=gemini-3-flash-preview input=42734 output=2730
+2026-04-06 13:11:07,976 [war_room] Phase 3: 参谋长刘亚楼汇总
+2026-04-06 13:11:07,977 [gemini_cli] calling gemini CLI, prompt 4295 chars → file C:/Users/lintian/AppData/Local/Temp/lindang_prompt_0f9c_7yi.md
+2026-04-06 13:12:50,436 [gemini_cli] model=gemini-2.5-flash-lite input=6378 output=93
+2026-04-06 13:12:50,437 [gemini_cli] model=gemini-3-flash-preview input=5210 output=584
+2026-04-06 13:12:50,437 [war_room] Phase 4: 司令员林彪独立判断（🔮 Gemini CLI（免费））
+2026-04-06 13:12:50,438 [gemini_cli] calling gemini CLI, prompt 3642 chars → file C:/Users/lintian/AppData/Local/Temp/lindang_prompt_wrgjizx5.md
+2026-04-06 13:14:28,318 [gemini_cli] model=gemini-2.5-flash-lite input=5987 output=124
+2026-04-06 13:14:28,318 [gemini_cli] model=gemini-3.1-pro-preview input=11651 output=1258
+2026-04-06 13:14:28,318 [war_room] Phase 5: 组装战报并保存
+2026-04-06 13:14:28,328 [war_room] 完成: 东山精密 综合 84.9
+2026-04-06 13:14:29,233 [war_room] email sent: 【指挥部战报】东山精密 84.9分 总攻信号
+[event_deep] [5/5] 东山精密 完成: 84.9分 总攻信号

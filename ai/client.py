@@ -57,10 +57,15 @@ def reset_token_usage():
 # ══════════════════════════════════════════════════════════════════════════════
 
 def get_ai_client(model_name: str) -> tuple[OpenAI | None, dict | None, str | None]:
-    """返回 (client, config, error_msg)"""
+    """返回 (client, config, error_msg)。CLI 模式下 client=None 但不报错。"""
     cfg = MODEL_CONFIGS.get(model_name)
     if not cfg:
         return None, None, "未知模型配置"
+
+    # CLI 模式不需要 OpenAI client
+    if cfg.get("provider") in ("gemini_cli", "codex_cli", "claude_cli"):
+        return None, cfg, None
+
     if not cfg["api_key"]:
         return None, cfg, f"「{model_name}」的 API Key 尚未配置"
     try:
@@ -70,7 +75,15 @@ def get_ai_client(model_name: str) -> tuple[OpenAI | None, dict | None, str | No
                 "HTTP-Referer": "https://a-stock-research-assistant.streamlit.app",
                 "X-Title": "A-Stock Research Assistant",
             }
-        client = OpenAI(api_key=cfg["api_key"], base_url=cfg["base_url"], **extra_kwargs)
+        # 国内 API 不走代理，外网 API（OpenRouter 等）走 Clash 代理
+        import httpx
+        _domestic = ("qwen", "zhipu", "doubao", "deepseek")
+        _proxy_url = None if cfg.get("provider") in _domestic else "http://127.0.0.1:7890"
+        http_client = httpx.Client(proxy=_proxy_url)
+        client = OpenAI(
+            api_key=cfg["api_key"], base_url=cfg["base_url"],
+            http_client=http_client, **extra_kwargs,
+        )
         return client, cfg, None
     except Exception as e:
         return None, cfg, str(e)
@@ -151,13 +164,35 @@ class StreamResult:
             yield f"\n\n⚠️ 流式输出异常：{str(e)[:120]}"
 
 
-def call_ai_stream(client: OpenAI, cfg: dict, prompt: str,
+def call_ai_stream(client: OpenAI | None, cfg: dict, prompt: str,
                    system: str = "", max_tokens: int = 12000,
                    username: str = ""):
     """
     流式调用 AI 模型，yield 文本片段。
     返回 StreamResult 对象（可迭代 + full_text 属性）。
+    CLI 模式下一次性返回全文（非流式）。
     """
+    # CLI 模式：Gemini CLI / Codex CLI / Claude Code CLI
+    if cfg.get("provider") in ("gemini_cli", "codex_cli", "claude_cli"):
+        from ai.cli_providers import call_gemini_cli, call_codex_cli, call_claude_cli
+        if cfg["provider"] == "gemini_cli":
+            fn = call_gemini_cli
+        elif cfg["provider"] == "codex_cli":
+            fn = call_codex_cli
+        else:
+            fn = lambda p, s: call_claude_cli(p, s, model=cfg.get("model", "opus"))
+
+        def _cli_generate():
+            text, err = fn(prompt, system)
+            if err:
+                yield f"\n\n⚠️ CLI 调用失败：{err}"
+            else:
+                yield text
+                est = int((len(prompt) + len(text)) * 0.7)
+                add_tokens(total_tokens=est, username=username)
+
+        return StreamResult(_cli_generate())
+
     prompt = strip_search_directives(prompt, cfg.get("supports_search", False))
     messages = _build_messages(prompt, system)
 
@@ -215,14 +250,30 @@ def call_ai_stream(client: OpenAI, cfg: dict, prompt: str,
     return StreamResult(_generate())
 
 
-def call_ai(client: OpenAI, cfg: dict, prompt: str,
+def call_ai(client: OpenAI | None, cfg: dict, prompt: str,
             system: str = "", max_tokens: int = 8000,
             username: str = "") -> tuple[str, str | None]:
     """
     调用 AI 模型，返回 (text, error_msg)。
     豆包走 responses API，其他走 chat.completions。
+    CLI 模式（gemini_cli/codex_cli/claude_cli）走 cli_providers。
     username 用于 per-user token 持久化。
     """
+    # CLI 模式
+    if cfg.get("provider") in ("gemini_cli", "codex_cli", "claude_cli"):
+        from ai.cli_providers import call_gemini_cli, call_codex_cli, call_claude_cli
+        if cfg["provider"] == "gemini_cli":
+            fn = call_gemini_cli
+        elif cfg["provider"] == "codex_cli":
+            fn = call_codex_cli
+        else:
+            fn = lambda p, s: call_claude_cli(p, s, model=cfg.get("model", "opus"))
+        text, err = fn(prompt, system)
+        if not err:
+            est = int((len(prompt) + len(text)) * 0.7)
+            add_tokens(total_tokens=est, username=username)
+        return text, err
+
     prompt = strip_search_directives(prompt, cfg.get("supports_search", False))
     messages = _build_messages(prompt, system)
 
@@ -255,6 +306,18 @@ def call_ai(client: OpenAI, cfg: dict, prompt: str,
                     total_tokens=resp.usage.total_tokens or 0,
                     username=username,
                 )
+
+            # 空响应检测：API 返回 200 但 content 为空/极短，自动重试
+            if len(text.strip()) < 10 and attempt < _MAX_RETRIES - 1:
+                logger.warning("[call_ai] 空响应（%d字），重试 %d/%d", len(text), attempt + 1, _MAX_RETRIES)
+                _time.sleep(1)
+                continue
+
+            # 截断检测：max_tokens 用尽时追加标记
+            finish_reason = getattr(resp.choices[0], "finish_reason", None)
+            if finish_reason == "length":
+                text += "\n\n⚠️ [输出被截断，以上内容可能不完整]"
+                logger.warning("[call_ai] 输出被 max_tokens 截断 (finish_reason=length)")
 
             return text, None
 

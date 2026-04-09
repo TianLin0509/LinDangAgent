@@ -33,6 +33,7 @@ _data_source = "fallback"
 def _init_tushare_bg():
     """后台探测 Tushare 可用性（超时 5 秒）"""
     global _pro, _ts_err, _data_source
+
     try:
         import tushare as ts
         import requests as _req
@@ -153,43 +154,78 @@ def _retry_call(fn, retries=3, delay=1):
 # 三层兜底调度器
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _try_with_fallback(tushare_fn, akshare_fn, eastmoney_fn=None, label="数据"):
-    """依次尝试 Tushare → akshare → 东方财富，返回第一个成功的结果"""
+def _try_with_fallback(tushare_fn, akshare_fn=None, eastmoney_fn=None, baostock_fn=None, sina_fn=None, label="数据"):
+    """依次尝试 Tushare → 东方财富 → AKShare → Baostock，返回第一个成功的结果
+
+    优先级依据实测：东方财富最快最稳(0.23s)，AKShare批量不稳，Baostock稳但慢(1.75s)
+    """
     global _data_source
 
-    # 第一层：Tushare
+    # 第一层：Tushare（数据最全）
     if _get_pro() is not None:
         try:
             result, err = tushare_fn()
             if err is None:
-                _data_source = "tushare"
+                with _init_lock:
+                    _data_source = "tushare"
                 return result, None
         except Exception as e:
             logger.debug("[%s] tushare 失败: %s", label, e)
 
-    # 第二层：akshare
-    if akshare_fn is not None:
-        try:
-            result, err = akshare_fn()
-            if err is None:
-                _data_source = "akshare"
-                return result, None
-        except Exception as e:
-            logger.debug("[%s] akshare 失败: %s", label, e)
-
-    # 第三层：东方财富
+    # 第二层：东方财富（最快最稳）
     if eastmoney_fn is not None:
         try:
             result, err = eastmoney_fn()
             if err is None:
-                _data_source = "eastmoney"
+                with _init_lock:
+                    _data_source = "eastmoney"
                 return result, None
         except Exception as e:
             logger.debug("[%s] eastmoney 失败: %s", label, e)
 
-    _data_source = "unavailable"
-    return (pd.DataFrame() if label == "K线" else ({} if label == "基本信息" else "")), \
-           f"所有数据源均不可用（{label}）"
+    # 第三层：AKShare（数据丰富，批量时不稳定）
+    if akshare_fn is not None:
+        try:
+            result, err = akshare_fn()
+            if err is None:
+                with _init_lock:
+                    _data_source = "akshare"
+                return result, None
+        except Exception as e:
+            logger.debug("[%s] akshare 失败: %s", label, e)
+
+    # 第四层：Baostock（最稳兜底，免费无限流，但较慢）
+    if baostock_fn is not None:
+        try:
+            result, err = baostock_fn()
+            if err is None:
+                with _init_lock:
+                    _data_source = "baostock"
+                return result, None
+        except Exception as e:
+            logger.debug("[%s] baostock 失败: %s", label, e)
+
+    # 第五层：Sina Finance（无鉴权，极稳定）
+    if sina_fn is not None:
+        try:
+            result, err = sina_fn()
+            if err is None:
+                with _init_lock:
+                    _data_source = "sina"
+                return result, None
+        except Exception as e:
+            logger.debug("[%s] sina 失败: %s", label, e)
+
+    with _init_lock:
+        _data_source = "unavailable"
+    # 根据 label 返回符合调用方类型期望的默认值
+    if label in ("K线", "历史估值"):
+        default = pd.DataFrame()
+    elif label == "基本信息":
+        default = {}
+    else:
+        default = ""
+    return default, f"所有数据源均不可用（{label}）"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -248,6 +284,8 @@ def load_stock_list() -> tuple[pd.DataFrame, str | None]:
 def resolve_stock(query: str) -> tuple[str, str, str | None]:
     """→ (ts_code, name, err)"""
     query = query.strip()
+    if not query:
+        return "", "", "请输入股票代码或名称"
     df, err = load_stock_list()
 
     def _is_code_like(value: str) -> bool:
@@ -333,17 +371,20 @@ def get_basic_info(ts_code: str) -> tuple[dict, str | None]:
             return result, ("; ".join(err_msgs) if err_msgs else None)
         return {}, "; ".join(err_msgs) if err_msgs else "Tushare 无数据"
 
+    from data.fallback import bs_get_basic_info, sina_get_realtime_quote
     return _try_with_fallback(
         _tushare,
         lambda: ak_get_basic_info(ts_code),
         lambda: em_get_basic_info(ts_code),
+        baostock_fn=lambda: bs_get_basic_info(ts_code),
+        sina_fn=lambda: sina_get_realtime_quote(ts_code),
         label="基本信息",
     )
 
 
 @compat_cache(ttl=300, show_spinner=False)
 def get_price_df(ts_code: str, days: int = 140) -> tuple[pd.DataFrame, str | None]:
-    from data.fallback import ak_get_price_df, em_get_price_df
+    from data.fallback import ak_get_price_df, em_get_price_df, bs_get_price_df
 
     def _tushare():
         if _get_pro() is None:
@@ -366,6 +407,7 @@ def get_price_df(ts_code: str, days: int = 140) -> tuple[pd.DataFrame, str | Non
         _tushare,
         lambda: ak_get_price_df(ts_code, days),
         lambda: em_get_price_df(ts_code, days),
+        baostock_fn=lambda: bs_get_price_df(ts_code, days),
         label="K线",
     )
 
@@ -437,30 +479,39 @@ def get_capital_flow(ts_code: str) -> tuple[str, str | None]:
             return df.sort_values("trade_date").tail(15).to_string(index=False), None
         return "暂无数据", None
 
+    from data.fallback import em_get_capital_flow_hist
     return _try_with_fallback(
         _tushare,
         lambda: ak_get_capital_flow(ts_code),
-        None,
+        eastmoney_fn=lambda: em_get_capital_flow_hist(ts_code),
         label="资金流向",
     )
 
 
 @compat_cache(ttl=600, show_spinner=False)
 def get_dragon_tiger(ts_code: str) -> tuple[str, str | None]:
-    """龙虎榜仅 Tushare 有，无备用源"""
-    if _get_pro() is None:
-        return "龙虎榜暂不可用（Tushare 不可用）", None
-    try:
+    """龙虎榜：Tushare → akshare 兜底"""
+    from data.fallback import ak_get_dragon_tiger
+
+    def _tushare():
+        if _get_pro() is None:
+            return "", _ts_err or "Tushare 不可用"
         df = _retry_call(
-            lambda: _get_pro().top_list(trade_date=ndays_ago(30), ts_code=ts_code,
+            lambda: _get_pro().top_list(start_date=ndays_ago(30), end_date=today(), ts_code=ts_code,
                                   fields="trade_date,name,close,pct_change,net_amount,reason"),
             retries=3, delay=1,
         )
         if df is not None and not df.empty:
             return df.head(10).to_string(index=False), None
         return "近30日无龙虎榜记录", None
-    except Exception as e:
-        return "龙虎榜暂不可用", f"龙虎榜：{e}"
+
+    from data.fallback import em_get_dragon_tiger_dc
+    return _try_with_fallback(
+        _tushare,
+        lambda: ak_get_dragon_tiger(ts_code),
+        eastmoney_fn=lambda: em_get_dragon_tiger_dc(ts_code),
+        label="龙虎榜",
+    )
 
 
 @compat_cache(ttl=600, show_spinner=False)
@@ -581,7 +632,8 @@ def get_margin_trading(ts_code: str) -> tuple[str, str | None]:
             logger.debug("[get_margin_trading] akshare 失败: %s", e)
         return "融资融券数据暂不可用", None
 
-    return _try_with_fallback(_tushare, _akshare, None, label="融资融券")
+    from data.fallback import em_get_margin_dc
+    return _try_with_fallback(_tushare, _akshare, eastmoney_fn=lambda: em_get_margin_dc(ts_code), label="融资融券")
 
 
 @compat_cache(ttl=600, show_spinner=False)
@@ -632,10 +684,12 @@ def get_sector_peers(ts_code: str) -> tuple[str, str | None]:
 
 @compat_cache(ttl=600, show_spinner=False)
 def get_holders_info(ts_code: str) -> tuple[str, str | None]:
-    """获取十大股东信息"""
-    if _get_pro() is None:
-        return "", "Tushare 不可用"
-    try:
+    """十大股东：Tushare → akshare 兜底"""
+    from data.fallback import ak_get_holders_info
+
+    def _tushare():
+        if _get_pro() is None:
+            return "", _ts_err or "Tushare 不可用"
         df = _retry_call(
             lambda: _get_pro().top10_holders(
                 ts_code=ts_code,
@@ -644,21 +698,26 @@ def get_holders_info(ts_code: str) -> tuple[str, str | None]:
             retries=3, delay=1,
         )
         if df is not None and not df.empty:
-            # 取最新一期
             latest = df[df["end_date"] == df["end_date"].max()]
             return (f"十大股东（截至 {latest.iloc[0]['end_date']}）：\n"
                     f"{latest.to_string(index=False)}"), None
         return "暂无十大股东数据", None
-    except Exception as e:
-        return "", f"十大股东：{e}"
+
+    return _try_with_fallback(
+        _tushare,
+        lambda: ak_get_holders_info(ts_code),
+        label="十大股东",
+    )
 
 
 @compat_cache(ttl=600, show_spinner=False)
 def get_pledge_info(ts_code: str) -> tuple[str, str | None]:
-    """获取股权质押统计"""
-    if _get_pro() is None:
-        return "", "Tushare 不可用"
-    try:
+    """股权质押：Tushare → akshare 兜底"""
+    from data.fallback import ak_get_pledge_info
+
+    def _tushare():
+        if _get_pro() is None:
+            return "", _ts_err or "Tushare 不可用"
         df = _retry_call(
             lambda: _get_pro().pledge_stat(
                 ts_code=ts_code,
@@ -674,17 +733,22 @@ def get_pledge_info(ts_code: str) -> tuple[str, str | None]:
                     f"质押比例={ratio}%\n"
                     f"{df.head(5).to_string(index=False)}"), None
         return "暂无质押数据", None
-    except Exception as e:
-        return "", f"质押数据：{e}"
+
+    return _try_with_fallback(
+        _tushare,
+        lambda: ak_get_pledge_info(ts_code),
+        label="质押数据",
+    )
 
 
 @compat_cache(ttl=600, show_spinner=False)
 def get_fund_holdings(ts_code: str) -> tuple[str, str | None]:
-    """获取基金持仓变动"""
-    if _get_pro() is None:
-        return "", "Tushare 不可用"
-    try:
-        # 获取最近两期基金持仓汇总
+    """基金持仓：Tushare → akshare 兜底"""
+    from data.fallback import ak_get_fund_holdings
+
+    def _tushare():
+        if _get_pro() is None:
+            return "", _ts_err or "Tushare 不可用"
         df = _retry_call(
             lambda: _get_pro().fund_portfolio(
                 ts_code=ts_code,
@@ -696,8 +760,12 @@ def get_fund_holdings(ts_code: str) -> tuple[str, str | None]:
             return (f"基金持仓情况（近两期）：\n"
                     f"{df.head(20).to_string(index=False)}"), None
         return "暂无基金持仓数据", None
-    except Exception as e:
-        return "", f"基金持仓：{e}"
+
+    return _try_with_fallback(
+        _tushare,
+        lambda: ak_get_fund_holdings(ts_code),
+        label="基金持仓",
+    )
 
 
 def price_summary(df: pd.DataFrame) -> str:

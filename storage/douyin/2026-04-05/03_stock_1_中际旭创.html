@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>/* 四野指挥部 · 抖音素材公共样式 */
+:root {
+    --primary: #c0392b;
+    --primary-light: #e74c3c;
+    --secondary: #2c3e50;
+    --bg-dark: #1a1a2e;
+    --bg-mid: #16213e;
+    --bg-deep: #0f3460;
+    --gold: #f39c12;
+    --gold-light: #f1c40f;
+    --danger: #e74c3c;
+    --safe: #27ae60;
+    --text-primary: #ecf0f1;
+    --text-secondary: #bdc3c7;
+    --text-muted: #7f8c8d;
+    --card-bg: rgba(255,255,255,0.06);
+    --card-border: rgba(255,255,255,0.1);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    width: 1080px;
+    height: 1920px;
+    overflow: hidden;
+    background: linear-gradient(180deg, var(--bg-dark) 0%, var(--bg-mid) 45%, var(--bg-deep) 100%);
+    font-family: "Microsoft YaHei", "SimHei", "PingFang SC", sans-serif;
+    color: var(--text-primary);
+    position: relative;
+}
+
+/* 军事网格背景 */
+body::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background-image:
+        linear-gradient(rgba(192,57,43,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(192,57,43,0.03) 1px, transparent 1px);
+    background-size: 60px 60px;
+    pointer-events: none;
+    z-index: 0;
+}
+
+body > * { position: relative; z-index: 1; }
+
+/* 标题区 */
+.header {
+    text-align: center;
+    padding: 60px 40px 30px;
+}
+
+.header .star {
+    font-size: 48px;
+    color: var(--primary);
+    text-shadow: 0 0 20px rgba(192,57,43,0.5);
+}
+
+.header .title {
+    font-size: 52px;
+    font-weight: 900;
+    letter-spacing: 6px;
+    color: var(--text-primary);
+    text-shadow: 0 2px 10px rgba(0,0,0,0.5);
+    margin-top: 12px;
+}
+
+.header .subtitle {
+    font-size: 28px;
+    color: var(--text-secondary);
+    margin-top: 8px;
+    letter-spacing: 2px;
+}
+
+/* 分隔线 */
+.divider {
+    width: 80%;
+    margin: 20px auto;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--primary), transparent);
+}
+
+/* 卡片 */
+.card {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 16px;
+    margin: 16px 40px;
+    padding: 24px 28px;
+    backdrop-filter: blur(10px);
+}
+
+/* 评级徽章 */
+.badge {
+    display: inline-block;
+    padding: 4px 16px;
+    border-radius: 20px;
+    font-size: 22px;
+    font-weight: 700;
+}
+.badge-attack { background: var(--primary); color: white; }
+.badge-recon { background: var(--gold); color: #1a1a2e; }
+.badge-retreat { background: #7f8c8d; color: white; }
+
+/* 评分条 */
+.score-bar-container {
+    display: flex;
+    align-items: center;
+    margin: 6px 0;
+}
+.score-bar-label {
+    width: 100px;
+    font-size: 20px;
+    color: var(--text-secondary);
+}
+.score-bar-track {
+    flex: 1;
+    height: 16px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 8px;
+    overflow: hidden;
+}
+.score-bar-fill {
+    height: 100%;
+    border-radius: 8px;
+    transition: width 0.3s;
+}
+.score-bar-value {
+    width: 60px;
+    text-align: right;
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--gold);
+}
+
+/* 底部信息 */
+.footer {
+    position: absolute;
+    bottom: 40px;
+    left: 0;
+    right: 0;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 20px;
+}
+
+.footer .brand {
+    color: var(--primary);
+    font-weight: 700;
+    font-size: 24px;
+}
+
+/* 排名数字 */
+.rank-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    font-size: 24px;
+    font-weight: 900;
+}
+.rank-1 { background: linear-gradient(135deg, #f39c12, #e67e22); color: #1a1a2e; }
+.rank-2 { background: linear-gradient(135deg, #bdc3c7, #95a5a6); color: #1a1a2e; }
+.rank-3 { background: linear-gradient(135deg, #e67e22, #d35400); color: white; }
+.rank-other { background: rgba(255,255,255,0.1); color: var(--text-secondary); }
+
+/* 雷达图（CSS 实现） */
+.radar-wrapper {
+    position: relative;
+    width: 280px;
+    height: 280px;
+    margin: 0 auto;
+}
+.radar-bg {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%;
+    height: 100%;
+}
+.radar-shape {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+}
+</style>
+<style>
+.stock-header {
+    padding: 50px 50px 20px;
+    display: flex;
+    align-items: flex-start;
+    gap: 24px;
+}
+
+.stock-header .rank-badge {
+    flex-shrink: 0;
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 40px;
+    font-weight: 900;
+}
+
+.stock-header .info h1 {
+    font-size: 56px;
+    font-weight: 900;
+    color: var(--text-primary);
+    line-height: 1.2;
+}
+
+.stock-header .info .code {
+    font-size: 26px;
+    color: var(--text-muted);
+    margin-top: 4px;
+}
+
+.score-big {
+    text-align: center;
+    padding: 30px 0 20px;
+}
+
+.score-big .number {
+    font-size: 100px;
+    font-weight: 900;
+    color: var(--gold);
+    line-height: 1;
+}
+
+.score-big .unit {
+    font-size: 36px;
+    color: var(--text-secondary);
+}
+
+.score-big .rating-badge {
+    margin-top: 16px;
+}
+
+/* 四维评分详情 */
+.dimensions {
+    margin: 10px 50px;
+}
+
+.dim-item {
+    display: flex;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.dim-label {
+    width: 120px;
+    font-size: 26px;
+    color: var(--text-secondary);
+    font-weight: 600;
+}
+
+.dim-track {
+    flex: 1;
+    height: 24px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 12px;
+    overflow: hidden;
+    margin: 0 16px;
+}
+
+.dim-fill {
+    height: 100%;
+    border-radius: 12px;
+}
+
+.dim-value {
+    width: 80px;
+    text-align: right;
+    font-size: 28px;
+    font-weight: 800;
+}
+
+.fill-fund { background: linear-gradient(90deg, var(--primary), var(--primary-light)); }
+.fill-expect { background: linear-gradient(90deg, var(--gold), #f1c40f); }
+.fill-capital { background: linear-gradient(90deg, var(--safe), #2ecc71); }
+.fill-tech { background: linear-gradient(90deg, #2980b9, #3498db); }
+
+.val-fund { color: var(--primary-light); }
+.val-expect { color: var(--gold); }
+.val-capital { color: var(--safe); }
+.val-tech { color: #3498db; }
+
+/* 核心摘要 */
+.summary-section {
+    margin: 24px 50px;
+}
+
+.summary-section h2 {
+    font-size: 28px;
+    color: var(--primary);
+    margin-bottom: 16px;
+    padding-left: 16px;
+    border-left: 4px solid var(--primary);
+}
+
+.summary-text {
+    font-size: 26px;
+    line-height: 1.8;
+    color: var(--text-secondary);
+    text-align: justify;
+}
+
+/* 关键数据 */
+.key-data {
+    display: flex;
+    gap: 16px;
+    margin: 24px 50px;
+}
+
+.key-data-item {
+    flex: 1;
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 14px;
+    padding: 20px 16px;
+    text-align: center;
+}
+
+.key-data-item .kd-label {
+    font-size: 20px;
+    color: var(--text-muted);
+}
+
+.key-data-item .kd-value {
+    font-size: 32px;
+    font-weight: 800;
+    color: var(--text-primary);
+    margin-top: 6px;
+}
+
+.key-data-item .kd-change {
+    font-size: 22px;
+    margin-top: 4px;
+}
+
+.change-up { color: var(--primary-light); }
+.change-down { color: var(--safe); }
+</style>
+</head>
+<body>
+<div class="stock-header">
+    <div class="rank-badge rank-1">1</div>
+    <div class="info">
+        <h1>中际旭创</h1>
+        <div class="code">300308 · 通信设备</div>
+    </div>
+</div>
+
+<div class="divider"></div>
+
+<div class="score-big">
+    <div class="number">8.55<span class="unit"> / 10</span></div>
+    <div class="rating-badge">
+        
+        
+        <span class="badge badge-attack" style="font-size:28px; padding:8px 28px;">总攻信号</span>
+        
+    </div>
+</div>
+
+<div class="dimensions">
+    <div class="dim-item">
+        <span class="dim-label">基本面</span>
+        <div class="dim-track"><div class="dim-fill fill-fund" style="width: 90.0%"></div></div>
+        <span class="dim-value val-fund">9.0</span>
+    </div>
+    <div class="dim-item">
+        <span class="dim-label">预期差</span>
+        <div class="dim-track"><div class="dim-fill fill-expect" style="width: 80.0%"></div></div>
+        <span class="dim-value val-expect">9.0</span>
+    </div>
+    <div class="dim-item">
+        <span class="dim-label">资金面</span>
+        <div class="dim-track"><div class="dim-fill fill-capital" style="width: 100.0%"></div></div>
+        <span class="dim-value val-capital">10.0</span>
+    </div>
+    <div class="dim-item">
+        <span class="dim-label">技术面</span>
+        <div class="dim-track"><div class="dim-fill fill-tech" style="width: 70.0%"></div></div>
+        <span class="dim-value val-tech">7.0</span>
+    </div>
+</div>
+
+<div class="summary-section">
+    <h2>核心战役摘要</h2>
+    <div class="summary-text">中际旭创目前获得8.5分总攻信号，评级为值得发起总攻。公司作为AI算力核心底座的绝对中军，2025年净利润增长108.78%且现金流充沛，基本面极其强悍。当前主攻方向为1.6T高端光模块的量产红利及2026年一季报业绩超预期。战术建议为采用三三制策略，在600元附近建立先头部队，若放量突破635元压力位则果断加码主力部队。若日线收盘价跌破580元支撑位则转为侦察待命，跌破555元则全线撤退。整体战</div>
+</div>
+
+<div class="key-data">
+    <div class="key-data-item">
+        <div class="kd-label">最新价</div>
+        <div class="kd-value">606.52</div>
+        
+        <div class="kd-change change-up">
+            +4.21%
+        </div>
+        
+    </div>
+    <div class="key-data-item">
+        <div class="kd-label">综合匹配度</div>
+        <div class="kd-value">85.5</div>
+        <div class="kd-change" style="color:var(--text-muted)">百分制</div>
+    </div>
+    <div class="key-data-item">
+        <div class="kd-label">建议</div>
+        <div class="kd-value" style="font-size:24px;">强烈推荐</div>
+        <div class="kd-change" style="color:var(--text-muted)">短线</div>
+    </div>
+</div>
+
+<div class="footer">
+    <span class="brand">林铛Agent</span> · 四野指挥部
+</div>
+</body>
+</html>

@@ -91,11 +91,33 @@ def _parse_generated_at(path: Path, result_data: dict) -> datetime:
 
 
 def _get_open_trade_dates(pro, start_date: str, end_date: str) -> list[str]:
-    cal = pro.trade_cal(exchange="SSE", start_date=start_date, end_date=end_date)
-    if cal is None or cal.empty:
-        return []
-    cal = cal[cal["is_open"] == 1].sort_values("cal_date")
-    return cal["cal_date"].astype(str).tolist()
+    # Tushare 路线
+    if pro is not None:
+        try:
+            cal = pro.trade_cal(exchange="SSE", start_date=start_date, end_date=end_date)
+            if cal is not None and not cal.empty:
+                cal = cal[cal["is_open"] == 1].sort_values("cal_date")
+                return cal["cal_date"].astype(str).tolist()
+        except Exception:
+            pass
+    # baostock 兜底
+    try:
+        import baostock as bs
+        lg = bs.login()
+        try:
+            rs = bs.query_trade_dates(start_date=f"{start_date[:4]}-{start_date[4:6]}-{start_date[6:]}",
+                                       end_date=f"{end_date[:4]}-{end_date[4:6]}-{end_date[6:]}")
+            data = []
+            while rs.error_code == "0" and rs.next():
+                row = rs.get_row_data()
+                if row[1] == "1":  # is_trading_day
+                    data.append(row[0].replace("-", ""))
+            return sorted(data)
+        finally:
+            bs.logout()
+    except Exception:
+        pass
+    return []
 
 
 def _pick_compare_trade_date(generated_at: datetime, open_trade_dates: list[str]) -> str:
@@ -188,24 +210,73 @@ def _select_review_candidate(now: datetime | None = None) -> ReviewCandidate:
 
 
 def _fetch_stock_daily_map(pro, trade_date: str, ts_codes: list[str]) -> dict[str, dict]:
-    df = pro.daily(trade_date=trade_date)
-    if df is None or df.empty:
-        return {}
-    df["ts_code"] = df["ts_code"].astype(str).str.upper()
     ts_code_set = {_normalize_ts_code(code) for code in ts_codes if code}
-    df = df[df["ts_code"].isin(ts_code_set)].copy()
-    return {row["ts_code"]: row.to_dict() for _, row in df.iterrows()}
+
+    # Tushare 路线
+    if pro is not None:
+        try:
+            df = pro.daily(trade_date=trade_date)
+            if df is not None and not df.empty:
+                df["ts_code"] = df["ts_code"].astype(str).str.upper()
+                df = df[df["ts_code"].isin(ts_code_set)].copy()
+                return {row["ts_code"]: row.to_dict() for _, row in df.iterrows()}
+        except Exception:
+            pass
+
+    # akshare 兜底：逐只获取
+    result = {}
+    try:
+        from data.fallback import ak_get_price_df
+        date_fmt = f"{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:]}"
+        for ts_code in ts_code_set:
+            try:
+                df, err = ak_get_price_df(ts_code, days=5)
+                if err is None and df is not None and not df.empty:
+                    df["日期"] = df["日期"].astype(str).str.replace("-", "")
+                    match = df[df["日期"] == trade_date]
+                    if not match.empty:
+                        row = match.iloc[0]
+                        result[ts_code] = {
+                            "ts_code": ts_code, "trade_date": trade_date,
+                            "open": row.get("开盘"), "high": row.get("最高"),
+                            "low": row.get("最低"), "close": row.get("收盘"),
+                            "vol": row.get("成交量"), "pct_chg": row.get("涨跌幅"),
+                        }
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return result
 
 
 def _fetch_sse_index_pct_chg(pro, trade_date: str) -> float | None:
-    df = pro.index_daily(ts_code=SSE_INDEX_CODE, start_date=trade_date, end_date=trade_date)
-    if df is None or df.empty:
-        return None
-    row = df.iloc[0]
+    # Tushare 路线
+    if pro is not None:
+        try:
+            df = pro.index_daily(ts_code=SSE_INDEX_CODE, start_date=trade_date, end_date=trade_date)
+            if df is not None and not df.empty:
+                return float(df.iloc[0]["pct_chg"])
+        except Exception:
+            pass
+    # akshare 兜底
     try:
-        return float(row["pct_chg"])
+        import akshare as ak
+        date_fmt = f"{trade_date[:4]}{trade_date[4:6]}{trade_date[6:]}"
+        df = ak.stock_zh_index_daily_em(symbol="sh000001")
+        if df is not None and not df.empty:
+            df["date"] = df["date"].astype(str).str.replace("-", "")
+            match = df[df["date"] == trade_date]
+            if not match.empty:
+                close = float(match.iloc[0]["close"])
+                # 找前一日
+                idx = df[df["date"] == trade_date].index[0]
+                if idx > 0:
+                    prev_close = float(df.iloc[idx - 1]["close"])
+                    if prev_close > 0:
+                        return round((close / prev_close - 1) * 100, 2)
     except Exception:
-        return None
+        pass
+    return None
 
 
 def _fmt_pct(value: float | None) -> str:

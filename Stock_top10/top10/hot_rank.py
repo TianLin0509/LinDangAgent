@@ -2,7 +2,7 @@
 
 import logging
 import pandas as pd
-from core.cache_compat import compat_cache
+from utils.cache_compat import compat_cache
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ def get_xueqiu_hot(top_n: int = 50) -> tuple[pd.DataFrame, str | None]:
 def get_volume_rank(top_n: int = 100) -> tuple[pd.DataFrame, str | None]:
     # 优先 Tushare
     try:
-        from top10.tushare_data import get_volume_rank_tushare, ts_ok
+        from Stock_top10.top10.tushare_data import get_volume_rank_tushare, ts_ok
         if ts_ok():
             df, err = get_volume_rank_tushare(top_n)
             if err is None and not df.empty:
@@ -123,11 +123,93 @@ def _get_volume_rank_akshare(top_n: int) -> tuple[pd.DataFrame, str | None]:
         return pd.DataFrame(), f"成交额榜获取失败（备用方案也失败）：{e}"
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# v3.0 新增数据源
+# ══════════════════════════════════════════════════════════════════════════════
+
+@compat_cache(ttl=1800)
+def get_capital_anomaly(top_n: int = 50) -> tuple[pd.DataFrame, str | None]:
+    """主力资金异动 Top N — 捕捉尚未上热搜但资金先手的黑马"""
+    try:
+        import akshare as ak
+        df = ak.stock_individual_fund_flow_rank(indicator="今日")
+        if df is None or df.empty:
+            return pd.DataFrame(), "资金异动数据为空"
+        flow_col = [c for c in df.columns if "主力净流入" in str(c) and "净占比" not in str(c)]
+        if not flow_col:
+            flow_col = [c for c in df.columns if "净额" in str(c)]
+        if flow_col:
+            df[flow_col[0]] = pd.to_numeric(df[flow_col[0]], errors="coerce")
+            df = df.sort_values(flow_col[0], ascending=False).head(top_n)
+        else:
+            df = df.head(top_n)
+
+        code_col = [c for c in df.columns if "代码" in str(c)][0]
+        name_col = [c for c in df.columns if "名称" in str(c)][0]
+        price_col = [c for c in df.columns if "最新价" in str(c)]
+
+        result = pd.DataFrame({
+            "代码": df[code_col].values,
+            "股票名称": df[name_col].values,
+            "最新价": df[price_col[0]].values if price_col else 0,
+            "涨跌幅": pd.to_numeric(
+                df["涨跌幅"] if "涨跌幅" in df.columns else 0,
+                errors="coerce"
+            ).values,
+            "排名": range(1, len(df) + 1),
+        })
+        result["代码"] = result["代码"].astype(str).str.replace(r"^(SH|SZ|BJ)", "", regex=True)
+        logger.info("[capital_anomaly] 获取主力资金异动 %d 只", len(result))
+        return result, None
+    except Exception as e:
+        logger.debug("[capital_anomaly] 获取失败: %s", e)
+        return pd.DataFrame(), f"资金异动获取失败：{e}"
+
+
+@compat_cache(ttl=1800)
+def get_limit_up_pool() -> tuple[pd.DataFrame, str | None]:
+    """涨停池 — 捕捉涨停/连板强势股"""
+    try:
+        import akshare as ak
+        df = ak.stock_zt_pool_em(date=pd.Timestamp.now().strftime("%Y%m%d"))
+        if df is None or df.empty:
+            return pd.DataFrame(), "涨停池数据为空"
+
+        code_col = [c for c in df.columns if "代码" in str(c)][0]
+        name_col = [c for c in df.columns if "名称" in str(c)][0]
+        price_col = [c for c in df.columns if "最新价" in str(c)]
+        lb_col = [c for c in df.columns if "连板" in str(c)]
+
+        result = pd.DataFrame({
+            "代码": df[code_col].values,
+            "股票名称": df[name_col].values,
+            "最新价": df[price_col[0]].values if price_col else 0,
+            "涨跌幅": pd.to_numeric(
+                df["涨跌幅"] if "涨跌幅" in df.columns else 0,
+                errors="coerce"
+            ).values,
+            "连板天数": df[lb_col[0]].values if lb_col else 1,
+            "排名": range(1, len(df) + 1),
+        })
+        result["代码"] = result["代码"].astype(str).str.replace(r"^(SH|SZ|BJ)", "", regex=True)
+        logger.info("[limit_up_pool] 获取涨停池 %d 只", len(result))
+        return result, None
+    except Exception as e:
+        logger.debug("[limit_up_pool] 获取失败: %s", e)
+        return pd.DataFrame(), f"涨停池获取失败：{e}"
+
+
 def merge_candidates(hot_df: pd.DataFrame, vol_df: pd.DataFrame,
-                     xq_df: pd.DataFrame = None) -> pd.DataFrame:
-    """合并东财人气榜 + 成交额榜 + 雪球热门，去重后返回"""
+                     xq_df: pd.DataFrame = None,
+                     capital_df: pd.DataFrame = None,
+                     zt_df: pd.DataFrame = None) -> pd.DataFrame:
+    """合并东财人气榜 + 成交额榜 + 雪球热门 + 资金异动 + 涨停池，去重后返回"""
     if xq_df is None:
         xq_df = pd.DataFrame()
+    if capital_df is None:
+        capital_df = pd.DataFrame()
+    if zt_df is None:
+        zt_df = pd.DataFrame()
 
     # 收集所有来源
     parts = []
@@ -161,7 +243,34 @@ def merge_candidates(hot_df: pd.DataFrame, vol_df: pd.DataFrame,
                 if mask.any():
                     p.loc[mask, "雪球排名"] = p.loc[mask, "代码"].map(xq_rank_map)
 
-    # 3) 成交额榜
+    # 3) v3.0：主力资金异动
+    if not capital_df.empty:
+        ca = capital_df[["代码", "股票名称", "最新价", "涨跌幅"]].copy()
+        ca["来源"] = "资金异动"
+        already = ca["代码"].isin(seen_codes)
+        new_only = ca[~already].copy()
+        if not new_only.empty:
+            parts.append(new_only)
+            seen_codes.update(new_only["代码"].tolist())
+        # 已有的标记多源
+        for p in parts:
+            mask = p["代码"].isin(ca["代码"]) & (p["代码"].isin(seen_codes - set(new_only["代码"].tolist())))
+            if mask.any():
+                p.loc[mask, "来源"] = p.loc[mask, "来源"].astype(str) + "+资金"
+
+    # 4) v3.0：涨停池
+    if not zt_df.empty:
+        zt = zt_df[["代码", "股票名称", "最新价", "涨跌幅"]].copy()
+        if "连板天数" in zt_df.columns:
+            zt["连板天数"] = zt_df["连板天数"]
+        zt["来源"] = "涨停池"
+        already = zt["代码"].isin(seen_codes)
+        new_only = zt[~already].copy()
+        if not new_only.empty:
+            parts.append(new_only)
+            seen_codes.update(new_only["代码"].tolist())
+
+    # 5) 成交额榜
     if not vol_df.empty:
         v = vol_df[["代码", "股票名称", "最新价", "涨跌幅"]].copy()
         v["成交额排名"] = vol_df["排名"]
@@ -230,9 +339,9 @@ def _apply_risk_filters(df: pd.DataFrame) -> pd.DataFrame:
 
     before = len(df)
 
-    # 1. 市值过滤：排除总市值 < 30 亿的微盘股（操纵风险高）
+    # 1. 市值过滤：v3.0 软化 — 仅排除 <10亿的极微盘，10-30亿由 signal.py 估值分软惩罚
     if "总市值(亿)" in df.columns:
-        df = df[~((df["总市值(亿)"].notna()) & (df["总市值(亿)"] < 30))]
+        df = df[~((df["总市值(亿)"].notna()) & (df["总市值(亿)"] < 10))]
 
     # 2. 流动性过滤：排除成交额 < 1 亿的低流动性标的
     if "成交额(亿)" in df.columns:
@@ -264,7 +373,7 @@ def _apply_risk_filters(df: pd.DataFrame) -> pd.DataFrame:
 @compat_cache(ttl=1800)
 def _get_all_volume_data() -> pd.DataFrame:
     try:
-        from top10.tushare_data import get_all_volume_data_tushare, ts_ok
+        from Stock_top10.top10.tushare_data import get_all_volume_data_tushare, ts_ok
         if ts_ok():
             df = get_all_volume_data_tushare()
             if not df.empty:

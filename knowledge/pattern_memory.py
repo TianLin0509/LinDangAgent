@@ -8,44 +8,11 @@ import logging
 from datetime import datetime
 from pathlib import Path
 
+from knowledge.kb_config import KNOWLEDGE_DIR, PATTERN_TEMPLATES
+
 logger = logging.getLogger(__name__)
 
-KNOWLEDGE_DIR = Path(__file__).resolve().parent.parent / "data" / "knowledge"
 PATTERNS_FILE = KNOWLEDGE_DIR / "patterns.jsonl"
-
-
-# ── 预定义模式 ─────────────────────────────────────────────────────
-
-PATTERN_TEMPLATES = {
-    "four_high": {
-        "description": "四维均≥7（全面强势）",
-        "condition": lambda s: all(s.get(d, 0) >= 7 for d in ["基本面", "预期差", "资金面", "技术面"]),
-    },
-    "high_fund_low_tech": {
-        "description": "基本面≥7 + 技术面≤4（等待技术确认）",
-        "condition": lambda s: s.get("基本面", 0) >= 7 and s.get("技术面", 10) <= 4,
-    },
-    "high_tech_low_fund": {
-        "description": "技术面≥7 + 基本面≤4（纯动量博弈）",
-        "condition": lambda s: s.get("技术面", 0) >= 7 and s.get("基本面", 10) <= 4,
-    },
-    "high_expectation": {
-        "description": "预期差≥8（强催化驱动）",
-        "condition": lambda s: s.get("预期差", 0) >= 8,
-    },
-    "capital_diverge": {
-        "description": "资金面≥7 + 基本面≤4（有资金无基本面）",
-        "condition": lambda s: s.get("资金面", 0) >= 7 and s.get("基本面", 10) <= 4,
-    },
-    "high_score_buy": {
-        "description": "综合加权≥7.5（高分推荐）",
-        "condition": lambda s: s.get("综合加权", 0) >= 7.5,
-    },
-    "low_score_avoid": {
-        "description": "综合加权≤3（坚决回避）",
-        "condition": lambda s: s.get("综合加权", 10) <= 3,
-    },
-}
 
 
 def rebuild_patterns(outcomes: list[dict] | None = None) -> list[dict]:

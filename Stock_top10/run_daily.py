@@ -17,7 +17,7 @@ logger = logging.getLogger("run_daily")
 
 def main():
     from config import DEFAULT_MODEL
-    from top10.deep_runner import run_deep_top10, get_deep_status
+    from Stock_top10.top10.deep_runner import run_deep_top10, get_deep_status
 
     # 检查是否已完成
     status = get_deep_status()

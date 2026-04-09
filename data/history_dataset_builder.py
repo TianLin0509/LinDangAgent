@@ -156,18 +156,46 @@ def load_research_metadata() -> dict:
     return json.loads(RESEARCH_META_PATH.read_text(encoding="utf-8"))
 
 
+def _get_trade_dates(pro, start_date: str, end_date: str) -> list[str]:
+    """获取交易日列表：Tushare → baostock 兜底"""
+    if pro is not None:
+        try:
+            trade_cal = pro.trade_cal(exchange="", start_date=start_date, end_date=end_date)
+            if trade_cal is not None and not trade_cal.empty:
+                return (
+                    trade_cal[trade_cal["is_open"] == 1]["cal_date"]
+                    .astype(str).sort_values().tolist()
+                )
+        except Exception:
+            pass
+    # baostock 兜底
+    try:
+        import baostock as bs
+        lg = bs.login()
+        try:
+            s_fmt = f"{start_date[:4]}-{start_date[4:6]}-{start_date[6:]}"
+            e_fmt = f"{end_date[:4]}-{end_date[4:6]}-{end_date[6:]}"
+            rs = bs.query_trade_dates(start_date=s_fmt, end_date=e_fmt)
+            dates = []
+            while rs.error_code == "0" and rs.next():
+                row = rs.get_row_data()
+                if row[1] == "1":
+                    dates.append(row[0].replace("-", ""))
+            return sorted(dates)
+        finally:
+            bs.logout()
+    except Exception:
+        pass
+    return []
+
+
 def _fetch_daily_by_trade_date(pro, *, start_date: str, end_date: str, pause_seconds: float) -> pd.DataFrame:
-    trade_cal = pro.trade_cal(exchange="", start_date=start_date, end_date=end_date)
-    if trade_cal is None or trade_cal.empty:
+    open_days = _get_trade_dates(pro, start_date, end_date)
+    if not open_days:
         return pd.DataFrame()
 
-    open_days = (
-        trade_cal[trade_cal["is_open"] == 1]["cal_date"]
-        .astype(str)
-        .sort_values()
-        .tolist()
-    )
-    if not open_days:
+    if pro is None:
+        print("[history_builder] WARNING: Tushare 不可用，无法批量获取全市场日线数据")
         return pd.DataFrame()
 
     frames: list[pd.DataFrame] = []

@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>/* 四野指挥部 · 抖音素材公共样式 */
+:root {
+    --primary: #c0392b;
+    --primary-light: #e74c3c;
+    --secondary: #2c3e50;
+    --bg-dark: #1a1a2e;
+    --bg-mid: #16213e;
+    --bg-deep: #0f3460;
+    --gold: #f39c12;
+    --gold-light: #f1c40f;
+    --danger: #e74c3c;
+    --safe: #27ae60;
+    --text-primary: #ecf0f1;
+    --text-secondary: #bdc3c7;
+    --text-muted: #7f8c8d;
+    --card-bg: rgba(255,255,255,0.06);
+    --card-border: rgba(255,255,255,0.1);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    width: 1080px;
+    height: 1920px;
+    overflow: hidden;
+    background: linear-gradient(180deg, var(--bg-dark) 0%, var(--bg-mid) 45%, var(--bg-deep) 100%);
+    font-family: "Microsoft YaHei", "SimHei", "PingFang SC", sans-serif;
+    color: var(--text-primary);
+    position: relative;
+}
+
+/* 军事网格背景 */
+body::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background-image:
+        linear-gradient(rgba(192,57,43,0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(192,57,43,0.03) 1px, transparent 1px);
+    background-size: 60px 60px;
+    pointer-events: none;
+    z-index: 0;
+}
+
+body > * { position: relative; z-index: 1; }
+
+/* 标题区 */
+.header {
+    text-align: center;
+    padding: 60px 40px 30px;
+}
+
+.header .star {
+    font-size: 48px;
+    color: var(--primary);
+    text-shadow: 0 0 20px rgba(192,57,43,0.5);
+}
+
+.header .title {
+    font-size: 52px;
+    font-weight: 900;
+    letter-spacing: 6px;
+    color: var(--text-primary);
+    text-shadow: 0 2px 10px rgba(0,0,0,0.5);
+    margin-top: 12px;
+}
+
+.header .subtitle {
+    font-size: 28px;
+    color: var(--text-secondary);
+    margin-top: 8px;
+    letter-spacing: 2px;
+}
+
+/* 分隔线 */
+.divider {
+    width: 80%;
+    margin: 20px auto;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--primary), transparent);
+}
+
+/* 卡片 */
+.card {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 16px;
+    margin: 16px 40px;
+    padding: 24px 28px;
+    backdrop-filter: blur(10px);
+}
+
+/* 评级徽章 */
+.badge {
+    display: inline-block;
+    padding: 4px 16px;
+    border-radius: 20px;
+    font-size: 22px;
+    font-weight: 700;
+}
+.badge-attack { background: var(--primary); color: white; }
+.badge-recon { background: var(--gold); color: #1a1a2e; }
+.badge-retreat { background: #7f8c8d; color: white; }
+
+/* 评分条 */
+.score-bar-container {
+    display: flex;
+    align-items: center;
+    margin: 6px 0;
+}
+.score-bar-label {
+    width: 100px;
+    font-size: 20px;
+    color: var(--text-secondary);
+}
+.score-bar-track {
+    flex: 1;
+    height: 16px;
+    background: rgba(255,255,255,0.08);
+    border-radius: 8px;
+    overflow: hidden;
+}
+.score-bar-fill {
+    height: 100%;
+    border-radius: 8px;
+    transition: width 0.3s;
+}
+.score-bar-value {
+    width: 60px;
+    text-align: right;
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--gold);
+}
+
+/* 底部信息 */
+.footer {
+    position: absolute;
+    bottom: 40px;
+    left: 0;
+    right: 0;
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 20px;
+}
+
+.footer .brand {
+    color: var(--primary);
+    font-weight: 700;
+    font-size: 24px;
+}
+
+/* 排名数字 */
+.rank-num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    font-size: 24px;
+    font-weight: 900;
+}
+.rank-1 { background: linear-gradient(135deg, #f39c12, #e67e22); color: #1a1a2e; }
+.rank-2 { background: linear-gradient(135deg, #bdc3c7, #95a5a6); color: #1a1a2e; }
+.rank-3 { background: linear-gradient(135deg, #e67e22, #d35400); color: white; }
+.rank-other { background: rgba(255,255,255,0.1); color: var(--text-secondary); }
+
+/* 雷达图（CSS 实现） */
+.radar-wrapper {
+    position: relative;
+    width: 280px;
+    height: 280px;
+    margin: 0 auto;
+}
+.radar-bg {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%;
+    height: 100%;
+}
+.radar-shape {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+}
+</style>
+<style>
+.page-title {
+    text-align: center;
+    padding: 50px 40px 10px;
+}
+.page-title h1 {
+    font-size: 44px;
+    font-weight: 900;
+    color: var(--text-primary);
+}
+.page-title .meta {
+    font-size: 22px;
+    color: var(--text-muted);
+    margin-top: 8px;
+}
+
+.rank-table {
+    margin: 20px 32px;
+}
+
+.rank-row {
+    display: flex;
+    align-items: center;
+    padding: 20px 20px;
+    margin-bottom: 10px;
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 14px;
+}
+
+.rank-row.top3 {
+    border-color: rgba(243,156,18,0.3);
+    background: rgba(243,156,18,0.06);
+}
+
+.rank-col-rank {
+    width: 60px;
+    flex-shrink: 0;
+}
+
+.rank-col-info {
+    flex: 1;
+    margin-left: 16px;
+}
+
+.rank-col-info .name {
+    font-size: 30px;
+    font-weight: 800;
+    color: var(--text-primary);
+}
+
+.rank-col-info .sub {
+    font-size: 18px;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+.rank-col-score {
+    width: 120px;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.rank-col-score .num {
+    font-size: 36px;
+    font-weight: 900;
+    color: var(--gold);
+}
+
+.rank-col-score .label {
+    font-size: 16px;
+    color: var(--text-muted);
+}
+
+.rank-col-badge {
+    width: 140px;
+    text-align: right;
+    flex-shrink: 0;
+}
+
+/* 四维迷你条 */
+.mini-bars {
+    display: flex;
+    gap: 4px;
+    margin-top: 8px;
+}
+.mini-bar {
+    height: 6px;
+    border-radius: 3px;
+    flex: 1;
+}
+
+.bar-fund { background: var(--primary); }
+.bar-expect { background: var(--gold); }
+.bar-capital { background: var(--safe); }
+.bar-tech { background: #3498db; }
+
+.legend {
+    display: flex;
+    justify-content: center;
+    gap: 24px;
+    margin: 16px 40px 0;
+    font-size: 18px;
+    color: var(--text-muted);
+}
+.legend-dot {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    margin-right: 6px;
+    vertical-align: middle;
+}
+</style>
+</head>
+<body>
+<div class="page-title">
+    <h1>★ Top10 精选战报</h1>
+    <div class="meta">2026-04-06 · 候选池筛选 → 侦察评估 → 深度分析</div>
+</div>
+
+<div class="divider"></div>
+
+<div class="rank-table">
+
+    <div class="rank-row top3">
+        <div class="rank-col-rank">
+            <span class="rank-num rank-1">1</span>
+        </div>
+        <div class="rank-col-info">
+            <div class="name">中际旭创</div>
+            <div class="sub">300308 · 通信设备</div>
+            <div class="mini-bars">
+                <div class="mini-bar bar-fund" style="opacity: 0.9"></div>
+                <div class="mini-bar bar-expect" style="opacity: 0.8"></div>
+                <div class="mini-bar bar-capital" style="opacity: 1.0"></div>
+                <div class="mini-bar bar-tech" style="opacity: 0.7"></div>
+            </div>
+        </div>
+        <div class="rank-col-score">
+            <div class="num">8.55</div>
+            <div class="label">综合分</div>
+        </div>
+        <div class="rank-col-badge">
+            
+            
+            <span class="badge badge-attack">总攻信号</span>
+            
+        </div>
+    </div>
+
+    <div class="rank-row top3">
+        <div class="rank-col-rank">
+            <span class="rank-num rank-2">2</span>
+        </div>
+        <div class="rank-col-info">
+            <div class="name">亨通光电</div>
+            <div class="sub">600487 · 通信设备</div>
+            <div class="mini-bars">
+                <div class="mini-bar bar-fund" style="opacity: 0.8"></div>
+                <div class="mini-bar bar-expect" style="opacity: 0.9"></div>
+                <div class="mini-bar bar-capital" style="opacity: 0.9"></div>
+                <div class="mini-bar bar-tech" style="opacity: 0.7"></div>
+            </div>
+        </div>
+        <div class="rank-col-score">
+            <div class="num">8.45</div>
+            <div class="label">综合分</div>
+        </div>
+        <div class="rank-col-badge">
+            
+            
+            <span class="badge badge-retreat">—</span>
+            
+        </div>
+    </div>
+
+    <div class="rank-row top3">
+        <div class="rank-col-rank">
+            <span class="rank-num rank-3">3</span>
+        </div>
+        <div class="rank-col-info">
+            <div class="name">罗博特科</div>
+            <div class="sub">300757 · 专用机械</div>
+            <div class="mini-bars">
+                <div class="mini-bar bar-fund" style="opacity: 0.8"></div>
+                <div class="mini-bar bar-expect" style="opacity: 0.9"></div>
+                <div class="mini-bar bar-capital" style="opacity: 0.9"></div>
+                <div class="mini-bar bar-tech" style="opacity: 0.7"></div>
+            </div>
+        </div>
+        <div class="rank-col-score">
+            <div class="num">8.45</div>
+            <div class="label">综合分</div>
+        </div>
+        <div class="rank-col-badge">
+            
+            
+            <span class="badge badge-retreat">—</span>
+            
+        </div>
+    </div>
+
+    <div class="rank-row ">
+        <div class="rank-col-rank">
+            <span class="rank-num rank-other">4</span>
+        </div>
+        <div class="rank-col-info">
+            <div class="name">美的集团</div>
+            <div class="sub">000333 · 家用电器</div>
+            <div class="mini-bars">
+                <div class="mini-bar bar-fund" style="opacity: 0.9"></div>
+                <div class="mini-bar bar-expect" style="opacity: 0.8"></div>
+                <div class="mini-bar bar-capital" style="opacity: 0.9"></div>
+                <div class="mini-bar bar-tech" style="opacity: 0.7"></div>
+            </div>
+        </div>
+        <div class="rank-col-score">
+            <div class="num">8.25</div>
+            <div class="label">综合分</div>
+        </div>
+        <div class="rank-col-badge">
+            
+            
+            <span class="badge badge-attack">总攻信号</span>
+            
+        </div>
+    </div>
+
+    <div class="rank-row ">
+        <div class="rank-col-rank">
+            <span class="rank-num rank-other">5</span>
+        </div>
+        <div class="rank-col-info">
+            <div class="name">招商轮船</div>
+            <div class="sub">601872 · 水运</div>
+            <div class="mini-bars">
+                <div class="mini-bar bar-fund" style="opacity: 0.9"></div>
+                <div class="mini-bar bar-expect" style="opacity: 0.8"></div>
+                <div class="mini-bar bar-capital" style="opacity: 0.9"></div>
+                <div class="mini-bar bar-tech" style="opacity: 0.7"></div>
+            </div>
+        </div>
+        <div class="rank-col-score">
+            <div class="num">8.25</div>
+            <div class="label">综合分</div>
+        </div>
+        <div class="rank-col-badge">
+            
+            
+            <span class="badge badge-attack">总攻信号</span>
+            
+        </div>
+    </div>
+
+    <div class="rank-row ">
+        <div class="rank-col-rank">
+            <span class="rank-num rank-other">6</span>
+        </div>
+        <div class="rank-col-info">
+            <div class="name">福晶科技</div>
+            <div class="sub">002222 · 元器件</div>
+            <div class="mini-bars">
+                <div class="mini-bar bar-fund" style="opacity: 0.8"></div>
+                <div class="mini-bar bar-expect" style="opacity: 0.9"></div>
+                <div class="mini-bar bar-capital" style="opacity: 0.8"></div>
+                <div class="mini-bar bar-tech" style="opacity: 0.7"></div>
+            </div>
+        </div>
+        <div class="rank-col-score">
+            <div class="num">8.15</div>
+            <div class="label">综合分</div>
+        </div>
+        <div class="rank-col-badge">
+            
+            
+            <span class="badge badge-retreat">—</span>
+            
+        </div>
+    </div>
+
+    <div class="rank-row ">
+        <div class="rank-col-rank">
+            <span class="rank-num rank-other">7</span>
+        </div>
+        <div class="rank-col-info">
+            <div class="name">光迅科技</div>
+            <div class="sub">002281 · 通信设备</div>
+            <div class="mini-bars">
+                <div class="mini-bar bar-fund" style="opacity: 0.9"></div>
+                <div class="mini-bar bar-expect" style="opacity: 0.8"></div>
+                <div class="mini-bar bar-capital" style="opacity: 0.8"></div>
+                <div class="mini-bar bar-tech" style="opacity: 0.8"></div>
+            </div>
+        </div>
+        <div class="rank-col-score">
+            <div class="num">8.15</div>
+            <div class="label">综合分</div>
+        </div>
+        <div class="rank-col-badge">
+            
+            
+            <span class="badge badge-retreat">—</span>
+            
+        </div>
+    </div>
+
+    <div class="rank-row ">
+        <div class="rank-col-rank">
+            <span class="rank-num rank-other">8</span>
+        </div>
+        <div class="rank-col-info">
+            <div class="name">新易盛</div>
+            <div class="sub">300502 · 通信设备</div>
+            <div class="mini-bars">
+                <div class="mini-bar bar-fund" style="opacity: 0.9"></div>
+                <div class="mini-bar bar-expect" style="opacity: 0.8"></div>
+                <div class="mini-bar bar-capital" style="opacity: 0.9"></div>
+                <div class="mini-bar bar-tech" style="opacity: 0.6"></div>
+            </div>
+        </div>
+        <div class="rank-col-score">
+            <div class="num">8.05</div>
+            <div class="label">综合分</div>
+        </div>
+        <div class="rank-col-badge">
+            
+            
+            <span class="badge badge-recon">侦察待命</span>
+            
+        </div>
+    </div>
+
+    <div class="rank-row ">
+        <div class="rank-col-rank">
+            <span class="rank-num rank-other">9</span>
+        </div>
+        <div class="rank-col-info">
+            <div class="name">恒瑞医药</div>
+            <div class="sub">600276 · 化学制药</div>
+            <div class="mini-bars">
+                <div class="mini-bar bar-fund" style="opacity: 0.9"></div>
+                <div class="mini-bar bar-expect" style="opacity: 0.8"></div>
+                <div class="mini-bar bar-capital" style="opacity: 0.8"></div>
+                <div class="mini-bar bar-tech" style="opacity: 0.7"></div>
+            </div>
+        </div>
+        <div class="rank-col-score">
+            <div class="num">7.95</div>
+            <div class="label">综合分</div>
+        </div>
+        <div class="rank-col-badge">
+            
+            
+            <span class="badge badge-attack">总攻信号</span>
+            
+        </div>
+    </div>
+
+    <div class="rank-row ">
+        <div class="rank-col-rank">
+            <span class="rank-num rank-other">10</span>
+        </div>
+        <div class="rank-col-info">
+            <div class="name">中天科技</div>
+            <div class="sub">600522 · 通信设备</div>
+            <div class="mini-bars">
+                <div class="mini-bar bar-fund" style="opacity: 0.9"></div>
+                <div class="mini-bar bar-expect" style="opacity: 0.8"></div>
+                <div class="mini-bar bar-capital" style="opacity: 0.8"></div>
+                <div class="mini-bar bar-tech" style="opacity: 0.7"></div>
+            </div>
+        </div>
+        <div class="rank-col-score">
+            <div class="num">7.95</div>
+            <div class="label">综合分</div>
+        </div>
+        <div class="rank-col-badge">
+            
+            
+            <span class="badge badge-attack">总攻信号</span>
+            
+        </div>
+    </div>
+
+</div>
+
+<div class="legend">
+    <span><span class="legend-dot" style="background:var(--primary)"></span>基本面</span>
+    <span><span class="legend-dot" style="background:var(--gold)"></span>预期差</span>
+    <span><span class="legend-dot" style="background:var(--safe)"></span>资金面</span>
+    <span><span class="legend-dot" style="background:#3498db"></span>技术面</span>
+</div>
+
+<div class="footer">
+    <span class="brand">林铛Agent</span> · 四野指挥部
+</div>
+</body>
+</html>

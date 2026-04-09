@@ -6,8 +6,8 @@ import os
 import threading
 from datetime import date
 import pandas as pd
-from core.ai_client import get_ai_client, call_ai, get_token_usage
-from top10.prompts import SYSTEM_SUMMARY, build_summary_prompt
+from ai.client import get_ai_client, call_ai, get_token_usage
+from Stock_top10.top10.prompts import SYSTEM_SUMMARY, build_summary_prompt
 
 
 def _get_ss():
@@ -17,7 +17,7 @@ def _get_ss():
         return st.session_state
     except Exception:
         return {}
-from top10.scorer import score_all
+from Stock_top10.top10.scorer import score_all
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +126,7 @@ def get_cached_result(model_name: str) -> pd.DataFrame | None:
 
     # GitHub 远程拉取
     try:
-        from core.github_store import pull_json, is_enabled
+        from Stock_top10.core.github_store import pull_json, is_enabled
         if is_enabled():
             filename = f"{date.today().isoformat()}_{model_name}.json"
             data = pull_json(filename)
@@ -192,7 +192,7 @@ def save_cached_result(model_name: str, df: pd.DataFrame, summary: str = "",
 
     # 3. 推送到 GitHub（后台线程，不阻塞）
     try:
-        from core.github_store import push_json, is_enabled
+        from Stock_top10.core.github_store import push_json, is_enabled
         if is_enabled():
             filename = f"{date.today().isoformat()}_{model_name}.json"
             import threading
@@ -228,7 +228,7 @@ def get_all_cached_models() -> list[str]:
 
     # GitHub 远程目录
     try:
-        from core.github_store import list_today_files, is_enabled
+        from Stock_top10.core.github_store import list_today_files, is_enabled
         if is_enabled():
             for fn in list_today_files(today_str):
                 model = fn[len(today_str) + 1:-5]
@@ -347,24 +347,9 @@ def _send_top10_email(summary: str, scored_df: pd.DataFrame,
 </div>
 </body></html>"""
 
-        host, port, user, pwd = _get_smtp_config()
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = subject
-        msg["From"] = user
-        msg["To"] = RECIPIENT
-        msg.attach(MIMEText(html_body, "html", "utf-8"))
-
-        if port == 465:
-            with smtplib.SMTP_SSL(host, port, timeout=15) as server:
-                server.login(user, pwd)
-                server.sendmail(user, RECIPIENT, msg.as_string())
-        else:
-            with smtplib.SMTP(host, port, timeout=15) as server:
-                server.starttls()
-                server.login(user, pwd)
-                server.sendmail(user, RECIPIENT, msg.as_string())
-
-        logger.info("[top10] 📧 Top10 报告已发送至 %s", RECIPIENT)
+        from utils.email_sender import send_html_email
+        send_html_email(subject, html_body)
+        logger.info("[top10] Top10 报告邮件已发送")
     except Exception as e:
         logger.warning("[top10] 邮件发送失败: %s", e)
 
@@ -410,7 +395,7 @@ def start_scoring(ss, candidates_df: pd.DataFrame, model_name: str,
         try:
             job["progress"].append("📊 正在从 Tushare 获取增强数据（PE/PB/K线）...")
             try:
-                from top10.tushare_data import enrich_candidates, ts_ok
+                from Stock_top10.top10.tushare_data import enrich_candidates, ts_ok
                 if ts_ok():
                     enriched_df = enrich_candidates(
                         candidates_df,
@@ -463,7 +448,7 @@ def start_scoring(ss, candidates_df: pd.DataFrame, model_name: str,
                 stocks_text = "\n".join(stock_lines)
 
                 try:
-                    from top10.tushare_data import get_sector_rotation
+                    from Stock_top10.top10.tushare_data import get_sector_rotation
                     sectors = get_sector_rotation()
                     if sectors.get("概念板块"):
                         stocks_text += "\n\n今日概念板块涨幅Top5：" + "、".join(sectors["概念板块"])

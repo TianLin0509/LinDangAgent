@@ -1,0 +1,26 @@
+{
+  "stock_name": "兆易创新",
+  "stock_code": "603986.SH",
+  "posts_short_count": 30,
+  "posts_mid_count": 5,
+  "short_term": {
+    "sentiment": "偏多",
+    "confidence": "中",
+    "error": "",
+    "bull_points": [
+      "属存储原厂，DRAM预计Q2继续涨价",
+      "资金从存储模组转向原厂，美股存储大涨带动",
+      "当前价位经多轮折腾考验，有一季报向好预期"
+    ],
+    "bear_points": [
+      "部分投资者认为股性差，多次过山车后清仓"
+    ]
+  },
+  "mid_term": {
+    "sentiment": "中性",
+    "confidence": "低",
+    "error": "LLM分析失败: 豆包返回空内容（已重试）",
+    "bull_points": [],
+    "bear_points": []
+  }
+}

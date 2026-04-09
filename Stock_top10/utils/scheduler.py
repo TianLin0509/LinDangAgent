@@ -21,11 +21,13 @@ def _now_bj() -> datetime:
 def _is_trading_day(dt: datetime) -> bool:
     if dt.weekday() >= 5:
         return False
+    date_str = dt.strftime("%Y%m%d")
+
+    # Tushare 路线
     try:
-        from core.tushare_client import get_pro
+        from data.tushare_client import get_pro
         pro = get_pro()
         if pro:
-            date_str = dt.strftime("%Y%m%d")
             cal = pro.trade_cal(
                 exchange="SSE",
                 start_date=date_str,
@@ -35,8 +37,23 @@ def _is_trading_day(dt: datetime) -> bool:
             if cal is not None and not cal.empty:
                 return bool(cal.iloc[0]["is_open"])
     except Exception as e:
-        logger.debug("[scheduler] 交易日历查询失败: %s，回退到工作日判断", e)
-    return True
+        logger.debug("[scheduler] Tushare 交易日历失败: %s", e)
+
+    # baostock 兜底
+    try:
+        import baostock as bs
+        lg = bs.login()
+        try:
+            date_fmt = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
+            rs = bs.query_trade_dates(start_date=date_fmt, end_date=date_fmt)
+            if rs.error_code == "0" and rs.next():
+                return rs.get_row_data()[1] == "1"
+        finally:
+            bs.logout()
+    except Exception as e:
+        logger.debug("[scheduler] baostock 交易日历失败: %s", e)
+
+    return True  # 默认按工作日处理
 
 
 def _scheduler_loop():
@@ -58,7 +75,7 @@ def _scheduler_loop():
             logger.info("[scheduler] 今日非交易日，跳过")
             continue
 
-        from top10.deep_runner import get_deep_status, is_deep_running
+        from Stock_top10.top10.deep_runner import get_deep_status, is_deep_running
         status = get_deep_status()
         if status and status.get("status") in ("done", "running"):
             logger.info("[scheduler] 今日深度分析已完成或正在运行，跳过")
@@ -69,7 +86,7 @@ def _scheduler_loop():
 
         logger.info("[scheduler] 🚀 触发每日深度 Top10 分析...")
         try:
-            from top10.deep_runner import run_deep_top10
+            from Stock_top10.top10.deep_runner import run_deep_top10
             run_deep_top10(
                 model_name=DEFAULT_MODEL,
                 candidate_count=100,

@@ -79,6 +79,15 @@ def compute_indicators(df: pd.DataFrame) -> dict:
     # ── 均线多头/空头评分 ────────────────────────────────────────────────────
     ma_score, ma_score_label = _compute_ma_score(close)
 
+    # ── 量比（当日量 / 近5日均量）────────────────────────────────────────────
+    volume_ratio, volume_ratio_label = _compute_volume_ratio(volume)
+
+    # ── ADX 趋势强度 ─────────────────────────────────────────────────────────
+    adx_14, adx_label = _compute_adx(high, low, close, 14)
+
+    # ── 52周高低点位置 ───────────────────────────────────────────────────────
+    week52_high, week52_low, week52_pos, week52_label = _compute_52week_position(close)
+
     # ── summary ──────────────────────────────────────────────────────────────
     summary_parts = [
         f"RSI(14)={rsi_14:.1f} {rsi_signal}",
@@ -89,6 +98,9 @@ def compute_indicators(df: pd.DataFrame) -> dict:
         f"KDJ({kdj_k:.0f}/{kdj_d:.0f}/{kdj_j:.0f}) {kdj_signal}" if kdj_k else "",
         f"MFI(14)={mfi_14:.0f} {mfi_signal}" if mfi_14 else "",
         f"均线评分={ma_score}/5 {ma_score_label}" if ma_score is not None else "",
+        f"量比={volume_ratio:.2f} {volume_ratio_label}" if volume_ratio else "",
+        f"ADX(14)={adx_14:.1f} {adx_label}" if adx_14 else "",
+        f"52周位置={week52_pos:.1f}% {week52_label}" if week52_pos is not None else "",
     ]
 
     return {
@@ -116,6 +128,14 @@ def compute_indicators(df: pd.DataFrame) -> dict:
         "mfi_signal": mfi_signal,
         "ma_score": ma_score,
         "ma_score_label": ma_score_label,
+        "volume_ratio": round(volume_ratio, 2) if volume_ratio else None,
+        "volume_ratio_label": volume_ratio_label,
+        "adx_14": round(adx_14, 1) if adx_14 else None,
+        "adx_label": adx_label,
+        "week52_high": round(week52_high, 2) if week52_high else None,
+        "week52_low": round(week52_low, 2) if week52_low else None,
+        "week52_pos": round(week52_pos, 1) if week52_pos is not None else None,
+        "week52_label": week52_label,
         "summary": " | ".join(p for p in summary_parts if p),
     }
 
@@ -130,9 +150,13 @@ def _compute_rsi(close: pd.Series, period: int = 14) -> float:
     loss = -delta.clip(upper=0)
     avg_gain = gain.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
     avg_loss = loss.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+    last_loss = float(avg_loss.iloc[-1])
+    if last_loss == 0:
+        return 100.0  # 标准 RSI 定义：无下跌时 RSI=100
     rs = avg_gain / avg_loss.replace(0, np.nan)
     rsi = 100 - 100 / (1 + rs)
-    return float(rsi.iloc[-1])
+    val = float(rsi.iloc[-1])
+    return val if not (np.isnan(val) or np.isinf(val)) else 50.0
 
 
 def _rsi_label(rsi: float) -> str:
@@ -386,37 +410,169 @@ def _compute_ma_score(close: pd.Series) -> tuple[int | None, str]:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# 量比（当日量 / 近5日均量）
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _compute_volume_ratio(volume: pd.Series) -> tuple[float | None, str]:
+    """量比 = 当日成交量 / 近5日日均量（不含当日）"""
+    if len(volume) < 6:
+        return None, "数据不足"
+    avg5 = volume.iloc[-6:-1].mean()
+    if avg5 <= 0:
+        return None, "数据异常"
+    ratio = float(volume.iloc[-1]) / float(avg5)
+    if ratio >= 3.0:
+        label = "天量(≥3倍)"
+    elif ratio >= 2.0:
+        label = "放量(≥2倍)"
+    elif ratio >= 1.5:
+        label = "温和放量"
+    elif ratio >= 0.8:
+        label = "正常"
+    elif ratio >= 0.5:
+        label = "缩量"
+    else:
+        label = "地量(<0.5倍)"
+    return ratio, label
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ADX 趋势强度 (14)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _compute_adx(high: pd.Series, low: pd.Series, close: pd.Series,
+                 period: int = 14) -> tuple[float | None, str]:
+    """ADX = 趋势强度指标，不判断方向，只判断趋势是否成立。
+    ADX < 20: 震荡无趋势  20-25: 趋势初现  >25: 趋势成立  >40: 强趋势
+    """
+    if len(close) < period * 2 + 1:
+        return None, "数据不足"
+
+    prev_high = high.shift(1)
+    prev_low = low.shift(1)
+    prev_close = close.shift(1)
+
+    # True Range
+    tr = pd.concat([
+        high - low,
+        (high - prev_close).abs(),
+        (low - prev_close).abs(),
+    ], axis=1).max(axis=1)
+
+    # Directional Movement
+    dm_plus = np.where((high - prev_high) > (prev_low - low),
+                       np.maximum(high - prev_high, 0), 0)
+    dm_minus = np.where((prev_low - low) > (high - prev_high),
+                        np.maximum(prev_low - low, 0), 0)
+
+    dm_plus_s = pd.Series(dm_plus, index=close.index)
+    dm_minus_s = pd.Series(dm_minus, index=close.index)
+
+    # Wilder 平滑
+    atr_w = tr.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+    di_plus = 100 * dm_plus_s.ewm(alpha=1 / period, min_periods=period, adjust=False).mean() / atr_w.replace(0, np.nan)
+    di_minus = 100 * dm_minus_s.ewm(alpha=1 / period, min_periods=period, adjust=False).mean() / atr_w.replace(0, np.nan)
+
+    dx = (100 * (di_plus - di_minus).abs() / (di_plus + di_minus).replace(0, np.nan)).fillna(0)
+    adx = dx.ewm(alpha=1 / period, min_periods=period, adjust=False).mean()
+
+    val = float(adx.iloc[-1])
+    if val >= 40:
+        label = "强趋势"
+    elif val >= 25:
+        label = "趋势成立"
+    elif val >= 20:
+        label = "趋势初现"
+    else:
+        label = "震荡无趋势"
+    return val, label
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 52周高低点位置
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _compute_52week_position(close: pd.Series) -> tuple[float | None, float | None, float | None, str]:
+    """计算当前价在52周（约250交易日）高低点区间内的位置百分比。
+    返回 (52周高点, 52周低点, 位置%, 标签)
+    位置% = (当前价 - 52周低) / (52周高 - 52周低) * 100
+    """
+    n = min(250, len(close))
+    if n < 20:
+        return None, None, None, "数据不足"
+
+    window = close.iloc[-n:]
+    high52 = float(window.max())
+    low52 = float(window.min())
+    current = float(close.iloc[-1])
+
+    rng = high52 - low52
+    if rng <= 0:
+        return high52, low52, 100.0, "价格无波动"
+
+    pos = (current - low52) / rng * 100
+
+    if pos >= 90:
+        label = "逼近52周高点(高位风险区)"
+    elif pos >= 70:
+        label = "52周高位区间"
+    elif pos >= 40:
+        label = "52周中位区间"
+    elif pos >= 20:
+        label = "52周低位区间"
+    else:
+        label = "逼近52周低点(低位机会区)"
+    return high52, low52, pos, label
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # 格式化输出
 # ══════════════════════════════════════════════════════════════════════════════
 
 def format_indicators_section(indicators: dict) -> str:
     """将指标字典格式化为 prompt 中的技术指标段落"""
-    if indicators.get("rsi_14") is None:
-        return ""
+    if not indicators or indicators.get("rsi_14") is None:
+        return "（技术指标数据不足，无法计算）"
+
+    def _s(val, fmt="{}", default="N/A"):
+        """安全格式化：None/NaN → default"""
+        if val is None:
+            return default
+        try:
+            import math
+            if isinstance(val, float) and (math.isnan(val) or math.isinf(val)):
+                return default
+        except (TypeError, ValueError):
+            pass
+        try:
+            return fmt.format(val)
+        except (TypeError, ValueError):
+            return default
 
     lines = [
         "## 技术指标",
-        indicators['summary'],
+        indicators.get('summary', ''),
         "",
-        f"RSI(14): {indicators['rsi_14']}  信号: {indicators['rsi_signal']}",
-        f"MACD: DIF={indicators['macd_dif']}  DEA={indicators['macd_dea']}  "
-        f"柱状={indicators['macd_hist']}  信号: {indicators['macd_signal']}  "
-        f"动能: {indicators['macd_hist_trend']}",
-        f"布林带(20,2): 上轨={indicators['bb_upper']}  中轨={indicators['bb_middle']}  "
-        f"下轨={indicators['bb_lower']}  带宽={indicators['bb_width_pct']}%  "
-        f"位置: {indicators['bb_position']}"
+        f"RSI(14): {_s(indicators.get('rsi_14'))}  信号: {_s(indicators.get('rsi_signal'))}",
+        f"MACD: DIF={_s(indicators.get('macd_dif'))}  DEA={_s(indicators.get('macd_dea'))}  "
+        f"柱状={_s(indicators.get('macd_hist'))}  信号: {_s(indicators.get('macd_signal'))}  "
+        f"动能: {_s(indicators.get('macd_hist_trend'))}",
+        f"布林带(20,2): 上轨={_s(indicators.get('bb_upper'))}  中轨={_s(indicators.get('bb_middle'))}  "
+        f"下轨={_s(indicators.get('bb_lower'))}  带宽={_s(indicators.get('bb_width_pct'))}%  "
+        f"位置: {_s(indicators.get('bb_position'))}"
         f"{'  *** 布林挤压(变盘前兆!) ***' if indicators.get('bb_squeeze') else ''}",
-        f"OBV趋势: {indicators['obv_trend']}",
+        f"OBV趋势: {_s(indicators.get('obv_trend'))}",
     ]
 
-    if indicators.get("atr_14"):
-        lines.append(
-            f"ATR(14): {indicators['atr_14']}  "
-            f"2ATR止损位: {indicators['atr_stop']}元  "
-            f"(距现价{abs(indicators['atr_14'] * 2 / indicators['bb_middle'] * 100):.1f}%)"
-            if indicators.get('bb_middle') else
-            f"ATR(14): {indicators['atr_14']}  2ATR止损位: {indicators['atr_stop']}元"
-        )
+    atr_14 = indicators.get("atr_14")
+    atr_stop = indicators.get("atr_stop")
+    bb_middle = indicators.get("bb_middle")
+    if atr_14:
+        if bb_middle and bb_middle > 0:
+            pct = abs(atr_14 * 2 / bb_middle * 100)
+            lines.append(f"ATR(14): {_s(atr_14)}  2ATR止损位: {_s(atr_stop)}元  (距现价{pct:.1f}%)")
+        else:
+            lines.append(f"ATR(14): {_s(atr_14)}  2ATR止损位: {_s(atr_stop)}元")
 
     if indicators.get("kdj_k") is not None:
         lines.append(
@@ -431,6 +587,25 @@ def format_indicators_section(indicators: dict) -> str:
         lines.append(
             f"均线排列评分: {indicators['ma_score']}/5  "
             f"状态: {indicators['ma_score_label']}"
+        )
+
+    if indicators.get("volume_ratio") is not None:
+        lines.append(
+            f"量比: {indicators['volume_ratio']}  "
+            f"信号: {indicators['volume_ratio_label']}"
+        )
+
+    if indicators.get("adx_14") is not None:
+        lines.append(
+            f"ADX(14): {indicators['adx_14']}  "
+            f"趋势强度: {indicators['adx_label']}"
+        )
+
+    if indicators.get("week52_pos") is not None:
+        lines.append(
+            f"52周位置: {indicators['week52_pos']}%  "
+            f"（高点{indicators['week52_high']} / 低点{indicators['week52_low']}）  "
+            f"状态: {indicators['week52_label']}"
         )
 
     return "\n".join(lines)

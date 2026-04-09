@@ -85,21 +85,101 @@ def is_deep_running() -> bool:
     return bool(status and status.get("status") == "running")
 
 
+def _fallback_last_trade_day(top_n: int = 100) -> tuple[pd.DataFrame, str]:
+    """非交易日兜底：获取上一个交易日的全市场行情作为候选池。
+
+    返回 (candidates_df, trade_date_str)。
+    """
+    from Stock_top10.top10.stock_filter import apply_filters
+
+    # 方案1：Tushare daily_basic 获取上一个交易日全市场数据
+    try:
+        from data.tushare_client import get_pro
+        pro = get_pro()
+        if pro is not None:
+            from datetime import datetime, timedelta
+            # 往前找最近5天内的交易日
+            for days_back in range(1, 6):
+                trade_date = (datetime.now() - timedelta(days=days_back)).strftime("%Y%m%d")
+                df = pro.daily_basic(
+                    trade_date=trade_date,
+                    fields="ts_code,close,pct_chg,turnover_rate,volume_ratio,pe_ttm,total_mv,amount"
+                )
+                if df is not None and len(df) > 50:
+                    # 按成交额排序取 Top N
+                    df = df.sort_values("amount", ascending=False).head(top_n * 2).reset_index(drop=True)
+                    result = pd.DataFrame({
+                        "代码": df["ts_code"].str.replace(r"\.(SH|SZ|BJ)", "", regex=True),
+                        "股票名称": "",  # Tushare daily_basic 没有名称，后面 enrich 会补
+                        "最新价": df["close"],
+                        "涨跌幅": df["pct_chg"],
+                        "成交额(亿)": (df["amount"] / 1000).round(2),  # amount 单位千元
+                        "换手率": df["turnover_rate"],
+                        "量比": df["volume_ratio"],
+                        "市盈率": df["pe_ttm"],
+                        "总市值(亿)": (df["total_mv"] / 10000).round(1),  # total_mv 单位万元
+                        "成交额排名": range(1, len(df) + 1),
+                    })
+                    # 补股票名称（Tushare → load_stock_list 兜底）
+                    try:
+                        stock_list = None
+                        try:
+                            stock_list = pro.stock_basic(fields="ts_code,name")
+                        except Exception:
+                            pass
+                        if stock_list is None or stock_list.empty:
+                            from data.tushare_client import load_stock_list
+                            stock_list, _ = load_stock_list()
+                        if stock_list is not None and not stock_list.empty:
+                            name_map = dict(zip(
+                                stock_list["ts_code"].str.replace(r"\.(SH|SZ|BJ)", "", regex=True),
+                                stock_list["name"]
+                            ))
+                            result["股票名称"] = result["代码"].map(name_map).fillna("")
+                    except Exception:
+                        pass
+
+                    result = apply_filters(result)
+                    readable_date = f"{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:]}"
+                    logger.info("[fallback] 使用 %s 交易日数据，%d 只候选", readable_date, len(result))
+                    return result.head(top_n), readable_date
+
+    except Exception as exc:
+        logger.warning("[fallback] Tushare 回退失败: %r", exc)
+
+    # 方案2：东方财富成交额榜（通常即使非交易日也有最近的数据缓存）
+    try:
+        from Stock_top10.top10.hot_rank import _get_volume_rank_eastmoney
+        vol_df, err = _get_volume_rank_eastmoney(top_n)
+        if not vol_df.empty:
+            vol_df = apply_filters(vol_df)
+            return vol_df, "最近交易日(东财)"
+    except Exception:
+        pass
+
+    return pd.DataFrame(), ""
+
+
 def run_deep_top10(
     model_name: str = _DEFAULT_MODEL,
     candidate_count: int = 100,
     username: str = "auto_scheduler",
     progress_callback=None,
+    war_room_preset: str = "gemini",
 ):
     global _is_running
 
-    from core.ai_client import call_ai, get_ai_client, get_token_usage
-    from top10.hot_rank import get_hot_rank, get_volume_rank, get_xueqiu_hot, merge_candidates
-    from top10.prompts import SYSTEM_SUMMARY, build_summary_prompt
-    from top10.runner import _send_top10_email, save_cached_result
-    from top10.scorer import score_all
-    from top10.stock_filter import apply_filters
-    from top10.tushare_data import enrich_candidates, get_sector_rotation, ts_ok
+    # 国内数据源（akshare/东财）不走代理，但不清除全局代理以免影响 Claude API 等外网调用
+    import os
+    os.environ["NO_PROXY"] = "localhost,127.0.0.1,ark.cn-beijing.volces.com,dashscope.aliyuncs.com,open.bigmodel.cn,api.deepseek.com"
+
+    from ai.client import call_ai, get_ai_client, get_token_usage
+    from Stock_top10.top10.hot_rank import get_hot_rank, get_volume_rank, get_xueqiu_hot, merge_candidates
+    from Stock_top10.top10.prompts import SYSTEM_SUMMARY, build_summary_prompt
+    from Stock_top10.top10.runner import _send_top10_email, save_cached_result
+    from Stock_top10.top10.scorer import score_all, score_all_war_room
+    from Stock_top10.top10.stock_filter import apply_filters
+    from Stock_top10.top10.tushare_data import enrich_candidates, get_sector_rotation, ts_ok
 
     with _running_lock:
         if _is_running:
@@ -147,8 +227,15 @@ def run_deep_top10(
         filtered = apply_filters(merged)
         candidates = filtered.head(candidate_count)
         _log(f"  候选池: 东财{len(hot_df)} + 雪球{len(xq_df)} + 成交额{len(vol_df)} -> {len(candidates)} 只")
+
+        # 非交易日兜底：三路数据都为空时，回退到上一个交易日的全市场行情
         if candidates.empty:
-            raise RuntimeError("候选池为空")
+            _log("  ⚠️ 候选池为空（可能非交易日），尝试回退到上一个交易日...")
+            candidates, trade_date = _fallback_last_trade_day(candidate_count)
+            if candidates.empty:
+                raise RuntimeError("候选池为空（非交易日兜底也失败）")
+            _log(f"  ✅ 使用 {trade_date} 交易日数据，获取 {len(candidates)} 只候选")
+            status["data_date"] = trade_date
 
         status["phase"] = "数据增强"
         _write_status(status)
@@ -168,9 +255,10 @@ def run_deep_top10(
             raise RuntimeError(f"AI 客户端初始化失败: {err}")
 
         # ── 断点续跑：加载已完成的增量结果 ────────────────────────────
-        from top10.scorer import load_incremental_results, clear_incremental_results
+        from Stock_top10.top10.scorer import load_incremental_results, clear_incremental_results
 
-        previous_results = load_incremental_results(model_name)
+        incremental_key = f"war_room_{war_room_preset}"
+        previous_results = load_incremental_results(incremental_key)
         already_scored_codes = {str(r["代码"]) for r in previous_results}
         resumed_count = len(already_scored_codes)
 
@@ -183,7 +271,53 @@ def run_deep_top10(
         status["total_count"] = overall_total
         status["scored_count"] = resumed_count
         _write_status(status)
-        _log(f"🤖 Phase 3: 为 {len(enriched)} 只候选股生成价值投机研报（总计 {overall_total} 只）...")
+        # ── Phase 2.5: 侦察兵快速评估 → Top 20 进深度 ────────────────
+        # ★ Scout 用 Claude Sonnet（可靠+免费），不跟随主模型
+        from Stock_top10.top10.scorer import scout_all
+
+        _log(f"🔍 Phase 2.5: 侦察兵快速评估 {len(enriched)} 只候选股（Claude Sonnet）...")
+        status["phase"] = "scouting"
+        _write_status(status)
+
+        scout_client, scout_cfg = client, cfg
+        try:
+            from ai.client import get_ai_client
+            _sc, _scfg, _serr = get_ai_client("⚡ Claude Sonnet（MAX）")
+            if _scfg:
+                scout_client, scout_cfg = _sc, _scfg
+                _log("  侦察兵模型: Claude Sonnet（MAX）")
+            else:
+                _log(f"  Claude Sonnet 不可用（{_serr}），回退到 {model_name}")
+        except Exception as e:
+            _log(f"  Claude Sonnet 初始化失败（{e}），回退到 {model_name}")
+
+        def scout_progress(current, total, msg):
+            status["current_stock"] = msg.split("→")[0].replace("🔍", "").replace("❌", "").strip() if "→" in msg else ""
+            _log(f"  [侦察 {current}/{total}] {msg}")
+
+        scouted = scout_all(
+            scout_client, scout_cfg, enriched,
+            progress_callback=scout_progress,
+            max_workers=3,
+            username=username,
+        )
+
+        # 取 Top 20 进入深度分析
+        deep_count = 20
+        top_for_deep = scouted.head(deep_count)
+        _log(f"✅ 侦察完成: {len(scouted)} 只 → Top {deep_count} 进入深度分析")
+        _log(f"   侦察前3: {', '.join(top_for_deep['股票名称'].head(3).tolist())}")
+
+        # 更新计数（深度只做 top_for_deep 这些）
+        enriched = top_for_deep
+        overall_total = resumed_count + len(enriched)
+        status["total_count"] = overall_total
+        status["scored_count"] = resumed_count
+        _write_status(status)
+
+        # ── Phase 3: 四野指挥部深度分析（仅 Top 20）─────────────────
+        _log(f"⚔️ Phase 3: 四野指挥部逐只分析 Top {len(enriched)}（阵容: {war_room_preset}）...")
+        status["phase"] = "war_room"
 
         def score_progress(current, total, msg):
             status["scored_count"] = resumed_count + current
@@ -192,13 +326,11 @@ def run_deep_top10(
                 status["current_stock"] = msg.split("→")[0].replace("✅", "").replace("❌", "").strip()
             _log(f"  [{resumed_count + current}/{overall_total}] {msg}")
 
-        scored = score_all(
-            client,
-            cfg,
+        scored = score_all_war_room(
             enriched,
-            model_name=model_name,
+            preset=war_room_preset,
             progress_callback=score_progress,
-            max_workers=2,
+            max_workers=1,  # 指挥部内部已有三将领并行
             username=username,
         )
 
@@ -265,7 +397,7 @@ def run_deep_top10(
             triggered_by=username,
             tokens_used=tokens_used,
         )
-        clear_incremental_results(model_name)
+        clear_incremental_results(incremental_key)
 
         _log(f"✅ 全部完成！共消耗 {tokens_used:,} token")
         _log("📧 发送 Top10 报告邮件...")
@@ -319,6 +451,7 @@ def start_deep_top10_async(
     model_name: str = _DEFAULT_MODEL,
     candidate_count: int = 100,
     username: str = "auto_scheduler",
+    war_room_preset: str = "gemini",
 ):
     if is_deep_running():
         return False
@@ -328,6 +461,7 @@ def start_deep_top10_async(
             "model_name": model_name,
             "candidate_count": candidate_count,
             "username": username,
+            "war_room_preset": war_room_preset,
         },
         daemon=True,
     )

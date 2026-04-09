@@ -7,7 +7,7 @@ import sqlite3
 from datetime import datetime
 from pathlib import Path
 
-from core.secrets_compat import _get_secret
+from utils.app_config import get_secret as _get_secret
 
 
 def _resolve_stock_lite_storage_dir() -> Path:

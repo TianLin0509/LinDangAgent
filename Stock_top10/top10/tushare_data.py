@@ -2,10 +2,10 @@
 
 import logging
 import pandas as pd
-from core.cache_compat import compat_cache
+from utils.cache_compat import compat_cache
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from core.tushare_client import (
+from data.tushare_client import (
     get_pro, get_ts_error, to_ts_code,
     today as _today, ndays_ago as _ndays_ago,
     _retry_call as _retry,
@@ -241,7 +241,7 @@ def enrich_candidates(df: pd.DataFrame, progress_callback=None) -> pd.DataFrame:
     if progress_callback:
         progress_callback("正在获取K线数据并计算技术指标...")
 
-    from top10.signal import compute_technicals, compute_quant_score, format_technicals_text
+    from Stock_top10.top10.signal import compute_technicals, compute_quant_score, format_technicals_text
 
     kline_results = {}
     kline_dfs = {}

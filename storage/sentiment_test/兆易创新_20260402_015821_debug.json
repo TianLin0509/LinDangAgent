@@ -1,0 +1,20 @@
+{
+  "stock_name": "兆易创新",
+  "stock_code": "603986.SH",
+  "posts_short_count": 30,
+  "posts_mid_count": 5,
+  "short_term": {
+    "sentiment": "中性",
+    "confidence": "低",
+    "error": "No module named 'openai'",
+    "bull_points": [],
+    "bear_points": []
+  },
+  "mid_term": {
+    "sentiment": "中性",
+    "confidence": "低",
+    "error": "No module named 'openai'",
+    "bull_points": [],
+    "bear_points": []
+  }
+}

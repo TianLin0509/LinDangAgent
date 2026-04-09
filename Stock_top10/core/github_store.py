@@ -13,7 +13,7 @@ import base64
 import json
 import logging
 import requests
-from core.secrets_compat import _get_secret
+from utils.app_config import get_secret as _get_secret
 
 logger = logging.getLogger(__name__)
 

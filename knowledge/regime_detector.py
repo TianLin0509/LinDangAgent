@@ -10,21 +10,16 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
+from knowledge.kb_config import (
+    KNOWLEDGE_DIR, REGIME_LABELS, SH_INDEX_CODE,
+    REGIME_NEAR_MA60_PCT, REGIME_RET_BULL, REGIME_RET_BEAR,
+    REGIME_RET_ROTATION, REGIME_HYSTERESIS_DAYS,
+)
+
 logger = logging.getLogger(__name__)
 
-KNOWLEDGE_DIR = Path(__file__).resolve().parent.parent / "data" / "knowledge"
 REGIME_FILE = KNOWLEDGE_DIR / "regime_log.jsonl"
 _lock = threading.Lock()
-
-# 上证指数代码
-SH_INDEX_CODE = "000001.SH"
-
-REGIME_LABELS = {
-    "bull": "牛市",
-    "bear": "熊市",
-    "shock": "震荡市",
-    "rotation": "轮动市",
-}
 
 
 def detect_current_regime() -> dict:
@@ -56,27 +51,31 @@ def detect_current_regime() -> dict:
         # MA 位置
         above_ma60 = latest > ma60
         ma20_above_ma60 = ma20 > ma60
-        near_ma60 = abs(latest - ma60) / ma60 * 100 < 3  # ±3%
+        near_ma60 = abs(latest - ma60) / ma60 * 100 < REGIME_NEAR_MA60_PCT
 
         # 分类
-        if above_ma60 and ma20_above_ma60 and ret_20d > 5:
-            regime = "bull"
-        elif not above_ma60 and not ma20_above_ma60 and ret_20d < -5:
-            regime = "bear"
+        if above_ma60 and ma20_above_ma60 and ret_20d > REGIME_RET_BULL:
+            raw_regime = "bull"
+        elif not above_ma60 and not ma20_above_ma60 and ret_20d < REGIME_RET_BEAR:
+            raw_regime = "bear"
         elif near_ma60:
-            regime = "shock"
-        elif above_ma60 and ret_20d < 2:
-            regime = "rotation"
+            raw_regime = "shock"
+        elif above_ma60 and ret_20d < REGIME_RET_ROTATION:
+            raw_regime = "rotation"
         else:
-            regime = "shock"
+            raw_regime = "shock"
+
+        # 滞后逻辑：只有连续 N 天相同环境才确认切换，避免分界线附近频繁切换
+        regime = _apply_hysteresis(raw_regime)
 
         indicators = {
-            "latest_close": round(latest, 2),
-            "ma20": round(ma20, 2),
-            "ma60": round(ma60, 2),
-            "ret_20d": round(ret_20d, 2),
-            "above_ma60": above_ma60,
-            "ma20_above_ma60": ma20_above_ma60,
+            "latest_close": round(float(latest), 2),
+            "ma20": round(float(ma20), 2),
+            "ma60": round(float(ma60), 2),
+            "ret_20d": round(float(ret_20d), 2),
+            "above_ma60": bool(above_ma60),
+            "ma20_above_ma60": bool(ma20_above_ma60),
+            "raw_regime": raw_regime,
         }
 
         result = {
@@ -95,6 +94,31 @@ def detect_current_regime() -> dict:
         return _fallback_regime("classification_error")
 
 
+def _apply_hysteresis(raw_regime: str) -> str:
+    """滞后逻辑：最近连续 N 天检测到同一环境才切换，否则保持上一次确认的环境。"""
+    current = get_current_regime()
+    if current is None:
+        return raw_regime  # 首次检测，直接采用
+
+    prev_regime = current.get("regime", "shock")
+    if raw_regime == prev_regime:
+        return raw_regime  # 与当前一致，无需切换
+
+    # 检查最近 N 天的历史记录是否全部为 raw_regime
+    history = get_regime_history(days=REGIME_HYSTERESIS_DAYS + 1)
+    recent_regimes = [
+        h.get("indicators", {}).get("raw_regime", h.get("regime", ""))
+        for h in history[-REGIME_HYSTERESIS_DAYS:]
+    ]
+    if len(recent_regimes) >= REGIME_HYSTERESIS_DAYS and all(r == raw_regime for r in recent_regimes):
+        logger.info("[regime] hysteresis passed: %s -> %s (confirmed after %d days)",
+                     prev_regime, raw_regime, REGIME_HYSTERESIS_DAYS)
+        return raw_regime
+
+    logger.debug("[regime] hysteresis holding: raw=%s, keeping=%s", raw_regime, prev_regime)
+    return prev_regime
+
+
 def _fallback_regime(reason: str) -> dict:
     """数据不可用时返回默认震荡市。"""
     return {
@@ -106,59 +130,22 @@ def _fallback_regime(reason: str) -> dict:
 
 
 def _save_regime(entry: dict):
-    """追加到 regime_log.jsonl，同日覆盖。"""
-    KNOWLEDGE_DIR.mkdir(parents=True, exist_ok=True)
-    today = entry["date"]
-
-    with _lock:
-        lines = []
-        if REGIME_FILE.exists():
-            for line in REGIME_FILE.read_text(encoding="utf-8").strip().split("\n"):
-                if not line:
-                    continue
-                try:
-                    existing = json.loads(line)
-                    if existing.get("date") == today:
-                        continue  # 覆盖同日记录
-                    lines.append(line)
-                except json.JSONDecodeError:
-                    continue
-        lines.append(json.dumps(entry, ensure_ascii=False))
-        REGIME_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    """追加到 regime_log.jsonl，同日覆盖（原子操作）。"""
+    from knowledge.kb_io import upsert_jsonl_by_key
+    upsert_jsonl_by_key(REGIME_FILE, entry, key_field="date", lock=_lock)
 
 
 def get_current_regime() -> dict | None:
     """获取最近一次 regime 记录（不重新检测）。"""
-    if not REGIME_FILE.exists():
-        return None
-    lines = REGIME_FILE.read_text(encoding="utf-8").strip().split("\n")
-    for line in reversed(lines):
-        if not line:
-            continue
-        try:
-            return json.loads(line)
-        except json.JSONDecodeError:
-            continue
-    return None
+    from knowledge.kb_io import read_jsonl_tail
+    tail = read_jsonl_tail(REGIME_FILE, n=1)
+    return tail[0] if tail else None
 
 
 def get_regime_history(days: int = 90) -> list[dict]:
     """返回最近 N 天的 regime 日志。"""
-    if not REGIME_FILE.exists():
-        return []
-    from datetime import timedelta
-    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
-    results = []
-    for line in REGIME_FILE.read_text(encoding="utf-8").strip().split("\n"):
-        if not line:
-            continue
-        try:
-            entry = json.loads(line)
-            if entry.get("date", "") >= cutoff:
-                results.append(entry)
-        except json.JSONDecodeError:
-            continue
-    return results
+    from knowledge.kb_io import read_jsonl_recent
+    return read_jsonl_recent(REGIME_FILE, days=days, date_field="date")
 
 
 def get_regime_accuracy(regime: str) -> dict:

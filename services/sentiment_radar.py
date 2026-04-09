@@ -15,7 +15,7 @@ _CACHE_DIR = Path(__file__).resolve().parent.parent / "storage" / "sentiment_cac
 _CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 # Unicode escape to avoid Windows encoding issues
-_DEFAULT_MODEL = "\u2b2b DeepSeek"  # ⚫ DeepSeek
+_DEFAULT_MODEL = "\U0001f7e3 \u8c46\u5305 \u00b7 Seed 2.0 Pro"  # 🟣 豆包 · Seed 2.0 Pro
 
 
 def _cache_path() -> Path:
@@ -61,10 +61,20 @@ def get_latest_radar() -> dict | None:
         return None
 
 
-def _build_prompt(posts: list[dict], stock_mentions: dict) -> str:
-    """组装给 LLM 的舆情分析 prompt。"""
+def _build_prompt(posts: list[dict], stock_mentions: dict, knowledge_ctx: str = "") -> str:
+    """组装给 LLM 的舆情分析 prompt。
+
+    优先展示带股票标签的帖子，最多取 50 条高质量帖子。
+    """
+    # 分两组：有股票标签的优先
+    with_stocks = [p for p in posts if p.get("mentioned_stocks")]
+    without_stocks = [p for p in posts if not p.get("mentioned_stocks")]
+
+    # 有股票的全部展示，无股票的补到 50 条上限
+    selected = with_stocks[:35] + without_stocks[: max(0, 50 - len(with_stocks[:35]))]
+
     lines = []
-    for i, p in enumerate(posts[:30], 1):
+    for i, p in enumerate(selected, 1):
         fans = p["followers_count"]
         fans_label = f"{fans // 10000}万" if fans >= 10000 else str(fans)
         stocks = ", ".join(p.get("mentioned_stocks", [])[:5]) or "未提及"
@@ -73,46 +83,67 @@ def _build_prompt(posts: list[dict], stock_mentions: dict) -> str:
             f"{'认证' if p.get('verified') else '未认证'}）"
             f"| 点赞{p['like_count']} 评论{p['reply_count']}\n"
             f"提及股票: {stocks}\n"
-            f"{p['text'][:400]}\n"
+            f"{p['text'][:500]}\n"
         )
 
     posts_text = "\n---\n".join(lines)
 
     # 股票提及统计
-    top_stocks = stock_mentions.most_common(15)
+    top_stocks = stock_mentions.most_common(20)
     mention_text = "、".join(f"{name}({count}次)" for name, count in top_stocks) if top_stocks else "无"
 
-    return f"""以下是雪球社区最近24小时内、粉丝数≥5万的投资大V发布的热门帖子（共{len(posts)}条，按点赞数排序）。
+    # 知识库上下文
+    knowledge_section = ""
+    if knowledge_ctx:
+        knowledge_section = f"\n【系统历史参考】\n{knowledge_ctx}\n"
+
+    return f"""以下是雪球社区最近24小时内的高质量投资帖子（共{len(selected)}条，按投资分析价值排序，优先展示提及具体股票的帖子）。
 
 股票提及频率统计：{mention_text}
-
+{knowledge_section}
 ---帖子内容---
 {posts_text}
 ---帖子结束---
 
-请基于以上内容，生成一份市场舆情分析报告。要求：
+请站在"中线价值投机"操盘手的视角，基于以上帖子内容生成一份实战导向的市场舆情研判。
 
-## 市场情绪总览
-给出整体情绪判断（偏多/中性/偏空），并说明置信度和依据。
+## 一、市场情绪温度计
+给出整体情绪判断（强烈偏多/偏多/中性/偏空/强烈偏空），置信度（高/中/低），并用2-3句话说明核心依据。重点关注大V之间的分歧和共识。
 
-## 热议板块与个股
-列出被讨论最多的板块和个股（按热度排序），每个给出情绪方向和代表性观点。
+## 二、热议板块与个股（按实战价值排序）
+用 Markdown 表格列出当前热议的板块和个股：
 
-## 大V核心观点
-摘要 3-5 位最有影响力大V的核心观点（注明粉丝量级）。
+| 板块/个股 | 情绪方向 | 讨论热度 | 代表性观点 | 操作启示 |
+|---|---|---|---|---|
 
-## 风险与机会信号
-从帖子中提取市场关注的风险点和潜在机会。
+"操作启示"栏必须落到"是否值得关注、适合左侧还是右侧、当前风险收益比如何"。
 
-## 一句话总结
-用一句话概括今日市场舆情。
+## 三、大V核心观点提炼
+摘要 3-5 位最有洞察力的大V观点（注明粉丝量级），重点提取：
+- 他们看好/看空什么？逻辑是什么？
+- 有没有与市场共识相反的"预期差"观点？
+- 哪些观点值得中线价值投机者重点跟踪？
 
-注意：基于帖子内容客观分析，不要编造帖子中没有的信息。"""
+## 四、风险与机会扫描
+- **潜在机会**：从帖子中提取被低估或刚开始被关注的板块/个股（尤其是基本面+催化共振的）
+- **风险预警**：板块退潮信号、资金撤退迹象、一致预期过满的板块
+- **事件催化**：近期可能影响市场的关键事件（财报季、政策、外围等）
+
+## 五、一句话总结
+用一句冷峻的操盘手口吻概括今日市场舆情。
+
+【输出纪律】
+1. 基于帖子内容客观分析，不编造帖子中没有的信息
+2. 所有金额用"亿元"或"万元"表示
+3. 表格必须用标准 Markdown 语法
+4. 结论要服务于交易决策，不要退化成新闻播报"""
 
 
 SYSTEM_PROMPT = (
-    "你是专业的A股市场舆情分析师，擅长从社交媒体讨论中提取市场情绪、"
-    "热点板块和投资者观点。输出使用 Markdown 格式。"
+    "你是一位深谙A股生态的资深操盘手兼舆情分析师。你的交易流派是冷血高效的'中线价值投机'："
+    "以基本面兜底锁定下行风险，以资金面热点与微观筹码博弈博取上行弹性，以技术面确立买卖纪律。"
+    "你擅长从社交媒体讨论中提取真正有价值的交易信号，过滤噪音，直击要害。"
+    "输出使用 Markdown 格式，语气冷峻客观。"
 )
 
 
@@ -162,13 +193,21 @@ def run_sentiment_radar(model_name: str = "") -> dict:
             for s in p.get("mentioned_stocks", []):
                 stock_mentions[s] += 1
 
+        # Phase 2.5: 获取知识库上下文（市场环境+历史经验）
+        knowledge_ctx = ""
+        try:
+            from knowledge.injector import build_knowledge_context
+            knowledge_ctx = build_knowledge_context()
+        except Exception:
+            pass
+
         # Phase 3: LLM 分析
         logger.info("[sentiment_radar] Phase 3: LLM 分析...")
         client, cfg, err = get_ai_client(model_name)
         if err:
             raise RuntimeError(f"AI 客户端初始化失败: {err}")
 
-        prompt = _build_prompt(posts, stock_mentions)
+        prompt = _build_prompt(posts, stock_mentions, knowledge_ctx)
         report_text, ai_err = call_ai(
             client, cfg, prompt,
             system=SYSTEM_PROMPT,
@@ -245,7 +284,7 @@ def run_sentiment_radar(model_name: str = "") -> dict:
 def build_radar_summary_text(radar: dict | None) -> str:
     """将舆情雷达结果格式化为微信消息文本。"""
     if not radar:
-        return "暂时没有可用的舆情雷达结果，可以发送"生成舆情"来获取。"
+        return "暂时没有可用的舆情雷达结果，可以发送「生成舆情」来获取。"
 
     date_str = radar.get("date", "")
     summary = radar.get("summary", "")
