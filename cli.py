@@ -284,7 +284,7 @@ def cmd_top10_sync():
     from Stock_top10.top10.deep_runner import run_deep_top10
 
     model = _active_model()
-    run_deep_top10(model_name=model, candidate_count=100, username="cli", war_room_preset="balanced")
+    run_deep_top10(model_name=model, candidate_count=100, username="cli", war_room_preset="max")
 
 
 def cmd_top10_progress():
