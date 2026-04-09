@@ -77,7 +77,11 @@ def _iter_result_files() -> list[Path]:
 
 
 def _load_result_file(path: Path) -> dict:
-    return json.loads(path.read_text(encoding="utf-8"))
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    # 兼容两种格式：dict{"results": [...]} 或直接 list
+    if isinstance(raw, list):
+        return {"results": raw}
+    return raw
 
 
 def _parse_generated_at(path: Path, result_data: dict) -> datetime:
