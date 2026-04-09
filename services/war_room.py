@@ -438,6 +438,24 @@ def run_war_room(
             for fut in futures:
                 general_reports.append(fut.result())
 
+    # ── Phase 1 审查：将领评分缺失则替补保护 ────────────────
+    valid_scores = [g["scores"].get("综合加权") for g in general_reports
+                    if g["scores"] and not g["scores"].get("_parse_failed")]
+    for i, g in enumerate(general_reports):
+        if g["scores"].get("_parse_failed") or g["scores"].get("综合加权") is None:
+            if valid_scores:
+                # 用其他将领的中位数填充
+                median_val = sorted(valid_scores)[len(valid_scores) // 2]
+                logger.warning("[war_room] Phase1审查：将领%s评分缺失，用中位数%.1f替补", chr(65+i), median_val)
+                g["scores"] = {"基本面": median_val, "预期差": median_val,
+                               "资金面": median_val, "技术面": median_val,
+                               "综合加权": median_val, "_substituted": True}
+            else:
+                # 所有将领都失败，给默认中性分（不触发提前止损）
+                logger.warning("[war_room] Phase1审查：将领%s评分缺失且无可用替补，默认50分", chr(65+i))
+                g["scores"] = {"基本面": 50, "预期差": 50, "资金面": 50, "技术面": 50,
+                               "综合加权": 50, "_substituted": True}
+
     # ── 提前止损检查：三将领全线撤退则跳过后续 ────────────────
     all_weighted = [g["scores"].get("综合加权", 50) for g in general_reports if g["scores"]]
     early_exit = len(all_weighted) >= 2 and all(w < 35 for w in all_weighted)
