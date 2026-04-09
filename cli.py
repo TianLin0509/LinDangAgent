@@ -263,8 +263,9 @@ def cmd_top10_generate():
         return
 
     model = _active_model()
-    env = {k: v for k, v in os.environ.items() if "proxy" not in k.lower()}
-    env.update({"PYTHONUTF8": "1", "NO_PROXY": "*"})
+    # 保留代理环境变量：子进程中 Claude/Gemini CLI 需要 Clash 代理
+    # 国内 API 由 NO_PROXY 和各 client 自行处理
+    env = {**os.environ, "PYTHONUTF8": "1"}
     subprocess.Popen(
         [sys.executable, str(BASE_DIR / "cli.py"), "_top10_sync"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
