@@ -1717,6 +1717,40 @@ def cmd_portfolio_history(limit: int = 20):
     _json_out({"status": "ok", "count": len(positions), "positions": positions})
 
 
+def cmd_review(args: list):
+    """批量复盘：对比分析预测与实际走势，生成经验条目。
+
+    Usage:
+        python cli.py review                         # 最近7天
+        python cli.py review --from 2026-04-01 --to 2026-04-10
+        python cli.py review 宁德时代                 # 单只股票
+    """
+    from knowledge.batch_reviewer import run_batch_review
+
+    date_from = None
+    date_to = None
+    stock_name = None
+
+    i = 0
+    while i < len(args):
+        if args[i] == "--from" and i + 1 < len(args):
+            date_from = args[i + 1]
+            i += 2
+        elif args[i] == "--to" and i + 1 < len(args):
+            date_to = args[i + 1]
+            i += 2
+        else:
+            stock_name = args[i]
+            i += 1
+
+    result = run_batch_review(
+        stock_name=stock_name,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    _json_out(result)
+
+
 # ── 命令路由 ─────────────────────────────────────────────────────
 
 COMMANDS = {
@@ -1743,6 +1777,7 @@ COMMANDS = {
     "list-models": lambda args: cmd_list_models(),
     "gpt-balance": lambda args: cmd_gpt_balance(),
     "xueqiu-posts": lambda args: cmd_xueqiu_posts(),
+    "review": lambda args: cmd_review(args),
     "review-run": lambda args: cmd_review_run(int(args[0]) if args else 5),
     "review-cases": lambda args: cmd_review_cases(int(args[0]) if args else 10),
     "review-summary": lambda args: cmd_review_summary(),
