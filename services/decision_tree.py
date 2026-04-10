@@ -58,44 +58,51 @@ def apply_corrections(scores: dict, rules: dict, high_prob_fatal_count: int = 0)
     Returns modified copy with flag fields:
       - _composite: weighted composite before corrections
       - _final: final composite after corrections
-      - _flags: list of triggered rule names
+      - _resonance_bonus: True if resonance rule fired
+      - _divergence_penalty: True if divergence rule fired
+      - _fundamental_breaker: True if fundamental circuit breaker fired
+      - _bucket_capped: True if bucket effect fired
+      - _premortem_cap: True if premortem cap fired
     """
     config = load_tree()
     weights = config["weights"]
+
+    # Extract cap values from rules dict (fall back to spec defaults)
+    fundamental_cap = rules.get("fundamental_circuit_breaker", {}).get("cap", 30)
+    bucket_cap = rules.get("bucket_effect", {}).get("cap", 60)
+    premortem_cap_val = rules.get("premortem_cap", {}).get("cap", 70)
 
     # Compute base composite
     composite = compute_weighted(scores, weights)
 
     result = dict(scores)
     result["_composite"] = composite
-    flags = []
 
     # Rule 1: resonance bonus
     if scores.get("预期差", 0) >= 75 and scores.get("资金面", 0) >= 70:
         composite += 3
-        flags.append("catalyst_capital_resonance")
+        result["_resonance_bonus"] = True
 
     # Rule 2: divergence penalty
     if scores.get("预期差", 0) >= 75 and scores.get("资金面", 0) <= 45:
         composite -= 5
-        flags.append("catalyst_capital_divergence")
+        result["_divergence_penalty"] = True
 
-    # Rule 3: fundamental circuit breaker (cap 30) — strongest override, check first among caps
+    # Rule 3: fundamental circuit breaker — strongest override, check first among caps
     if scores.get("基本面", 100) <= 25:
-        composite = min(composite, 30)
-        flags.append("fundamental_circuit_breaker")
-    # Rule 4: bucket effect (cap 60) — only if fundamental breaker not triggered
+        composite = min(composite, fundamental_cap)
+        result["_fundamental_breaker"] = True
+    # Rule 4: bucket effect — only if fundamental breaker not triggered
     elif any(v <= 30 for k, v in scores.items() if not k.startswith("_")):
-        composite = min(composite, 60)
-        flags.append("bucket_effect")
+        composite = min(composite, bucket_cap)
+        result["_bucket_capped"] = True
 
-    # Rule 5: premortem cap (cap 70)
+    # Rule 5: premortem cap
     if high_prob_fatal_count >= 1:
-        composite = min(composite, 70)
-        flags.append("premortem_cap")
+        composite = min(composite, premortem_cap_val)
+        result["_premortem_cap"] = True
 
     result["_final"] = round(composite, 1)
-    result["_flags"] = flags
     return result
 
 

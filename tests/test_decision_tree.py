@@ -37,7 +37,7 @@ def test_apply_corrections_resonance():
     """预期差>=75 and 资金面>=70 → +3 bonus."""
     scores = {"基本面": 60, "预期差": 80, "资金面": 70, "技术面": 65}
     result = apply_corrections(scores, {})
-    assert "catalyst_capital_resonance" in result["_flags"]
+    assert result.get("_resonance_bonus") is True
     # composite = 60*0.10 + 80*0.40 + 70*0.30 + 65*0.20 = 6 + 32 + 21 + 13 = 72.0 + 3 = 75.0
     assert result["_final"] == pytest.approx(75.0, abs=0.1)
 
@@ -46,7 +46,7 @@ def test_apply_corrections_divergence():
     """预期差>=75 and 资金面<=45 → -5 penalty."""
     scores = {"基本面": 60, "预期差": 80, "资金面": 40, "技术面": 65}
     result = apply_corrections(scores, {})
-    assert "catalyst_capital_divergence" in result["_flags"]
+    assert result.get("_divergence_penalty") is True
     # composite = 60*0.10 + 80*0.40 + 40*0.30 + 65*0.20 = 6 + 32 + 12 + 13 = 63.0 - 5 = 58.0
     assert result["_final"] == pytest.approx(58.0, abs=0.1)
 
@@ -55,7 +55,7 @@ def test_apply_corrections_bucket_cap():
     """Any dim <=30 → cap composite at 60."""
     scores = {"基本面": 60, "预期差": 80, "资金面": 30, "技术面": 65}
     result = apply_corrections(scores, {})
-    assert "bucket_effect" in result["_flags"]
+    assert result.get("_bucket_capped") is True
     assert result["_final"] <= 60
 
 
@@ -63,8 +63,8 @@ def test_apply_corrections_fundamental_breaker():
     """基本面<=25 → cap composite at 30 (overrides bucket)."""
     scores = {"基本面": 20, "预期差": 80, "资金面": 30, "技术面": 65}
     result = apply_corrections(scores, {})
-    assert "fundamental_circuit_breaker" in result["_flags"]
-    assert "bucket_effect" not in result["_flags"]
+    assert result.get("_fundamental_breaker") is True
+    assert result.get("_bucket_capped") is not True
     assert result["_final"] <= 30
 
 
@@ -72,7 +72,7 @@ def test_apply_premortem_cap():
     """high_prob_fatal>=1 → cap composite at 70."""
     scores = {"基本面": 70, "预期差": 85, "资金面": 80, "技术面": 75}
     result = apply_corrections(scores, {}, high_prob_fatal_count=1)
-    assert "premortem_cap" in result["_flags"]
+    assert result.get("_premortem_cap") is True
     assert result["_final"] <= 70
 
 
