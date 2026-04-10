@@ -590,6 +590,19 @@ def _extract_fatal_count(round2_text: str) -> int:
     return len(re.findall(r"概率[：:]\s*高", premortem))
 
 
+def _strip_markers(text: str) -> str:
+    """Remove parsing markers (<<<...>>>) from AI output before display."""
+    # Remove structured blocks that are already extracted by code
+    text = re.sub(r"<<<SCORES>>>.*?<<<END_SCORES>>>", "", text, flags=re.DOTALL)
+    text = re.sub(r"<<<SCORE_CORRECTIONS>>>.*?<<<END_SCORE_CORRECTIONS>>>", "", text, flags=re.DOTALL)
+    text = re.sub(r"<<<HIGH_PROB_FATAL_COUNT>>>.*?<<<END_HIGH_PROB_FATAL_COUNT>>>", "", text, flags=re.DOTALL)
+    # Remove remaining bare markers
+    text = re.sub(r"<<<\w+>>>", "", text)
+    # Clean up excessive blank lines
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
 def _build_v2_report(stock_name: str, round1_text: str, round2_text: str, final_scores: dict) -> str:
     """Assemble the final v2 report markdown."""
     header = build_report_header(stock_name, final_scores)
@@ -597,6 +610,9 @@ def _build_v2_report(stock_name: str, round1_text: str, round2_text: str, final_
     score_line = " | ".join(f"{d}: {final_scores.get(d, 50):.0f}" for d in dims)
     composite = final_scores.get("综合加权", 50)
     rating = final_scores.get("_rating", "按兵不动")
+
+    clean_r1 = _strip_markers(round1_text)
+    clean_r2 = _strip_markers(round2_text)
 
     return f"""{header}
 
@@ -607,13 +623,13 @@ def _build_v2_report(stock_name: str, round1_text: str, round2_text: str, final_
 
 ## 深度分析（Round 1）
 
-{round1_text}
+{clean_r1}
 
 ---
 
 ## 魔鬼代言人质疑（Round 2）
 
-{round2_text}
+{clean_r2}
 """
 
 
