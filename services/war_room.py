@@ -462,6 +462,12 @@ def _run_war_room_v2(
         macro_context=macro_brief,
     )
 
+    # 注入每日大盘深度分析（当日首次触发 Opus 分析，后续缓存）
+    from services.market_analysis import get_or_run_market_analysis
+    market_md = get_or_run_market_analysis(analyst_model)
+    if market_md:
+        full_data_brief = market_md + "\n\n" + full_data_brief
+
     # 注入进化经验
     experience_text = _get_experience_lessons(ts_code, resolved_name)
 
