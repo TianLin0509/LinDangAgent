@@ -116,11 +116,29 @@
         }
       },
       "Q3": {
+        "question": "近5日量价表现？（重点关注当日K线）",
+        "branches": {
+          "放量突破或缩量回踩_量价健康": {"next": "Q4", "modifier_range": [5, 10]},
+          "量价平稳_无明显异动": {"next": "Q4", "modifier": 0},
+          "放量滞涨或缩量反弹_量价背离": {"next": "Q4", "modifier_range": [-5, -3]},
+          "放量下跌或高位巨量阴线_危险信号": {"next": "Q4", "modifier_range": [-10, -8]}
+        }
+      },
+      "Q4": {
         "question": "形态信号？",
         "branches": {
-          "经典看多形态": {"modifier_range": [5, 10], "terminal": true},
-          "无明显形态": {"modifier": 0, "terminal": true},
-          "经典看空形态": {"modifier_range": [-10, -5], "terminal": true}
+          "经典看多形态_W底杯柄旗形突破": {"next": "Q5", "modifier_range": [5, 10]},
+          "无明显形态": {"next": "Q5", "modifier": 0},
+          "经典看空形态_头肩顶M顶跌破颈线": {"next": "Q5", "modifier_range": [-10, -5]}
+        }
+      },
+      "Q5": {
+        "question": "大盘环境对个股的影响？",
+        "branches": {
+          "大盘上升趋势_个股顺势": {"modifier_range": [3, 5], "terminal": true},
+          "大盘震荡_个股独立走势": {"modifier": 0, "terminal": true},
+          "大盘上升但个股逆势走弱": {"modifier_range": [-5, -3], "terminal": true},
+          "大盘下降趋势_系统性压制": {"modifier_range": [-8, -5], "terminal": true}
         }
       }
     },
