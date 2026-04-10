@@ -591,13 +591,15 @@ def _extract_fatal_count(round2_text: str) -> int:
 
 
 def _strip_markers(text: str) -> str:
-    """Remove parsing markers (<<<...>>>) from AI output before display."""
+    """Remove parsing markers and noise from AI output before display."""
     # Remove structured blocks that are already extracted by code
     text = re.sub(r"<<<SCORES>>>.*?<<<END_SCORES>>>", "", text, flags=re.DOTALL)
     text = re.sub(r"<<<SCORE_CORRECTIONS>>>.*?<<<END_SCORE_CORRECTIONS>>>", "", text, flags=re.DOTALL)
     text = re.sub(r"<<<HIGH_PROB_FATAL_COUNT>>>.*?<<<END_HIGH_PROB_FATAL_COUNT>>>", "", text, flags=re.DOTALL)
     # Remove remaining bare markers
     text = re.sub(r"<<<\w+>>>", "", text)
+    # Remove standalone --- separator lines (AI-generated noise)
+    text = re.sub(r"\n-{3,}\n", "\n\n", text)
     # Clean up excessive blank lines
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()

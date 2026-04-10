@@ -18,10 +18,10 @@ def test_load_decision_tree():
     """Verify weights load correctly from decision_tree.json."""
     config = reload_tree()
     weights = config["weights"]
-    assert weights["基本面"] == 0.10
-    assert weights["预期差"] == 0.40
-    assert weights["资金面"] == 0.30
-    assert weights["技术面"] == 0.20
+    assert weights["预期差"] == 0.30
+    assert weights["技术面"] == 0.40
+    assert weights["基本面"] == 0.20
+    assert weights["资金面"] == 0.10
     assert abs(sum(weights.values()) - 1.0) < 1e-9
 
 
@@ -39,8 +39,8 @@ def test_apply_corrections_resonance():
     scores = {"基本面": 60, "预期差": 80, "资金面": 70, "技术面": 65}
     result = apply_corrections(scores, {})
     assert result.get("_resonance_bonus") is True
-    # composite = 60*0.10 + 80*0.40 + 70*0.30 + 65*0.20 = 6 + 32 + 21 + 13 = 72.0 + 3 = 75.0
-    assert result["_final"] == pytest.approx(75.0, abs=0.1)
+    # composite = 80*0.30 + 65*0.40 + 60*0.20 + 70*0.10 = 24+26+12+7 = 69.0 + 3 = 72.0
+    assert result["_final"] == pytest.approx(72.0, abs=0.1)
 
 
 def test_apply_corrections_divergence():
@@ -48,8 +48,8 @@ def test_apply_corrections_divergence():
     scores = {"基本面": 60, "预期差": 80, "资金面": 40, "技术面": 65}
     result = apply_corrections(scores, {})
     assert result.get("_divergence_penalty") is True
-    # composite = 60*0.10 + 80*0.40 + 40*0.30 + 65*0.20 = 6 + 32 + 12 + 13 = 63.0 - 5 = 58.0
-    assert result["_final"] == pytest.approx(58.0, abs=0.1)
+    # composite = 80*0.30 + 65*0.40 + 60*0.20 + 40*0.10 = 24+26+12+4 = 66.0 - 5 = 61.0
+    assert result["_final"] == pytest.approx(61.0, abs=0.1)
 
 
 def test_apply_corrections_bucket_cap():

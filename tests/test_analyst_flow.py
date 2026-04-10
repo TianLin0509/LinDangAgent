@@ -136,7 +136,7 @@ def test_experience_roundtrip(tmp_path):
 def test_weights_updated_in_analysis_service():
     """Verify analysis_service weights match new spec."""
     from services.analysis_service import SCORE_WEIGHTS
-    assert SCORE_WEIGHTS["基本面"] == 0.10
-    assert SCORE_WEIGHTS["预期差"] == 0.40
-    assert SCORE_WEIGHTS["资金面"] == 0.30
-    assert SCORE_WEIGHTS["技术面"] == 0.20
+    assert SCORE_WEIGHTS["预期差"] == 0.30
+    assert SCORE_WEIGHTS["技术面"] == 0.40
+    assert SCORE_WEIGHTS["基本面"] == 0.20
+    assert SCORE_WEIGHTS["资金面"] == 0.10
