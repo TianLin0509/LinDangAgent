@@ -47,8 +47,8 @@ S级豁免: 否
 技术面: 50/100
 <<<END_SCORES>>>"""
         scores = parse_scores(text)
-        # Manual calculation: 60*0.15 + 80*0.35 + 70*0.30 + 50*0.20 = 9+28+21+10 = 68
-        expected = (60 * 0.15 + 80 * 0.35 + 70 * 0.30 + 50 * 0.20) / 1.0
+        # Manual calculation: 60*0.10 + 80*0.40 + 70*0.30 + 50*0.20 = 6+32+21+10 = 69
+        expected = (60 * 0.10 + 80 * 0.40 + 70 * 0.30 + 50 * 0.20) / 1.0
         self.assertAlmostEqual(scores["综合加权"], round(expected, 1))
 
     def test_partial_dimensions_weighted(self):

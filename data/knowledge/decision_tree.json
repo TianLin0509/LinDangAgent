@@ -73,12 +73,11 @@
     },
     "资金面": {
       "Q1": {
-        "question": "主力资金方向？（北向+融资+大单净额三者投票）",
+        "question": "主力资金方向？（融资余额变化+主力大单净额两者投票）",
         "branches": {
-          "三者同向流入": {"next": "Q2", "base_score": 70},
-          "两正一负": {"next": "Q2", "base_score": 55},
-          "两负一正": {"next": "Q2", "base_score": 40},
-          "三者同向流出": {"score_range": [25, 40], "terminal": true}
+          "两者同向流入": {"next": "Q2", "base_score": 70},
+          "一正一负": {"next": "Q2", "base_score": 50},
+          "两者同向流出": {"score_range": [25, 40], "terminal": true}
         }
       },
       "Q2": {
