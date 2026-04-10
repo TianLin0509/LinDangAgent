@@ -150,8 +150,8 @@ def _save_and_open_html(md_text: str, stock_name: str, report_id: str) -> str:
 
 # ── 四野指挥部（多模型并行 + 辩论） ────────────────────────────
 
-def cmd_war_room(stock: str, preset: str = "gemini"):
-    """四野指挥部：3将领并行分析 → 刘亚楼汇总 → 林彪裁决。"""
+def cmd_war_room(stock: str, preset: str = "opus"):
+    """指挥部分析：新版(opus/sonnet)两轮深度分析 或 旧版(balanced/max/gemini)多将领模式。"""
     from services.war_room import WAR_ROOM_PRESETS, run_war_room
 
     if preset not in WAR_ROOM_PRESETS:
@@ -163,46 +163,61 @@ def cmd_war_room(stock: str, preset: str = "gemini"):
     # 自动生成 HTML 并打开
     html_path = _save_and_open_html(result.combined_markdown, result.stock_name, result.report_id)
 
-    # 构建评分对比输出
-    general_scores = []
-    for i, g in enumerate(result.general_reports):
-        s = g.get("scores", {})
-        general_scores.append({
-            "label": f"将领{chr(65+i)}",
-            "基本面": s.get("基本面", "?"),
-            "预期差": s.get("预期差", "?"),
-            "资金面": s.get("资金面", "?"),
-            "技术面": s.get("技术面", "?"),
-            "综合": s.get("综合加权", "?"),
-        })
-
     p = WAR_ROOM_PRESETS[preset]
-    _json_out({
-        "status": "ok",
-        "report_id": result.report_id,
-        "stock_name": result.stock_name,
-        "stock_code": result.stock_code,
-        "preset": preset,
-        "preset_label": p["label"],
-        "models": {
-            f"将领A": p["scouts"][0],
-            f"将领B": p["scouts"][1] if len(p["scouts"]) > 1 else p["scouts"][0],
-            f"将领C": p["scouts"][2] if len(p["scouts"]) > 2 else p["scouts"][0],
-            "林彪": "Claude Opus 4.6（本机对话）" if p["commander"] == "claude_opus" else p["commander"],
-        },
-        "opus_mode": p["commander"] == "claude_opus",
-        "general_scores": general_scores,
-        "final_scores": result.final_scores,
-        "final_summary": result.final_summary,
-        "html_path": html_path,
-    })
+    is_legacy = p.get("_legacy", False)
+
+    if is_legacy:
+        # 旧版多将领模式输出
+        general_scores = []
+        for i, g in enumerate(result.general_reports):
+            s = g.get("scores", {})
+            general_scores.append({
+                "label": f"将领{chr(65+i)}",
+                "基本面": s.get("基本面", "?"),
+                "预期差": s.get("预期差", "?"),
+                "资金面": s.get("资金面", "?"),
+                "技术面": s.get("技术面", "?"),
+                "综合": s.get("综合加权", "?"),
+            })
+        _json_out({
+            "status": "ok",
+            "report_id": result.report_id,
+            "stock_name": result.stock_name,
+            "stock_code": result.stock_code,
+            "preset": preset,
+            "preset_label": p["label"],
+            "models": {
+                "将领A": p["scouts"][0],
+                "将领B": p["scouts"][1] if len(p["scouts"]) > 1 else p["scouts"][0],
+                "将领C": p["scouts"][2] if len(p["scouts"]) > 2 else p["scouts"][0],
+                "林彪": p["commander"],
+            },
+            "general_scores": general_scores,
+            "final_scores": result.final_scores,
+            "final_summary": result.final_summary,
+            "html_path": html_path,
+        })
+    else:
+        # 新版两轮深度分析输出
+        _json_out({
+            "status": "ok",
+            "report_id": result.report_id,
+            "stock_name": result.stock_name,
+            "stock_code": result.stock_code,
+            "preset": preset,
+            "preset_label": p["label"],
+            "model": p["analyst"],
+            "final_scores": result.final_scores,
+            "final_summary": result.final_summary,
+            "html_path": html_path,
+        })
 
 
 # ── 单股分析 → 统一走指挥部模式 ──────────────────────────────────
 
 def cmd_analyze(stock: str):
-    """单股分析统一走指挥部模式（全Claude MAX阵容：Sonnet将领+Opus裁决）。"""
-    cmd_war_room(stock, preset="max")
+    """单股分析 — Opus两轮深度分析+决策树评分。"""
+    cmd_war_room(stock, preset="opus")
 
 
 # ── K线预测（同步） ──────────────────────────────────────────────
@@ -262,19 +277,18 @@ def cmd_top10_generate():
         _json_out({"status": "running", "message": "Top10 任务已在运行中"})
         return
 
-    model = _active_model()
     # 保留代理环境变量：子进程中 Claude/Gemini CLI 需要 Clash 代理
     # 国内 API 由 NO_PROXY 和各 client 自行处理
     env = {**os.environ, "PYTHONUTF8": "1"}
     subprocess.Popen(
         [sys.executable, str(BASE_DIR / "cli.py"), "_top10_sync"],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        creationflags=0x00000008 | 0x08000000,  # DETACHED_PROCESS | CREATE_NO_WINDOW  # DETACHED_PROCESS (Windows)
+        creationflags=0x00000008 | 0x08000000,  # DETACHED_PROCESS | CREATE_NO_WINDOW
         env=env,
     )
     _json_out({
         "status": "accepted",
-        "model": model,
+        "model": "全 Claude MAX 阵容（Sonnet将领+Opus裁决）",
         "message": "Top10 生成已启动（约15-30分钟）。用 top10-progress 查进度。",
     })
 
@@ -913,6 +927,245 @@ def _send_event_recon_email(event_desc: str, results: list):
     send_text_email(subject, "\n".join(lines))
 
 
+# ── 龙头反抽 ─────────────────────────────────────────────────────
+
+def cmd_dragon_scan():
+    """Phase 1-3 量化扫描：龙头池构建 → 回调量化 → 止稳信号打分。"""
+    from services.dragon_pullback import run_dragon_scan
+    candidates = run_dragon_scan(progress_cb=lambda msg: logger.info(msg))
+    if not candidates:
+        _json_out({"status": "no_candidates", "message": "未找到符合龙头反抽条件的标的"})
+        return
+    # 输出精简信息
+    summary = []
+    for c in candidates:
+        summary.append({
+            "name": c.get("name", ""),
+            "code": c["ts_code"].split(".")[0],
+            "ts_code": c["ts_code"],
+            "streak": c.get("max_streak"),
+            "peak_date": c.get("peak_date"),
+            "pullback_pct": round(c.get("pullback_pct", 0), 1),
+            "days_since_peak": c.get("days_since_peak"),
+            "stabilization_score": c.get("stabilization_score", 0),
+            "score_detail": c.get("score_detail", ""),
+        })
+    _json_out({"status": "ok", "count": len(summary), "candidates": summary})
+
+
+def cmd_dragon_deep(preset: str = "balanced"):
+    """Phase 4 AI 深度分析（基于当日已有的扫描结果），后台执行。"""
+    from services.dragon_pullback import get_latest_candidates, is_dragon_running
+
+    if is_dragon_running():
+        _json_out({"status": "running", "message": "龙头反抽任务已在运行中"})
+        return
+
+    candidates = get_latest_candidates()
+    if not candidates:
+        _json_out({"status": "error", "message": "无当日候选数据，请先执行 dragon-scan"})
+        return
+
+    env = {**os.environ, "PYTHONUTF8": "1"}
+    log_dir = BASE_DIR / "storage" / "dragon_pullback"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / f"deep_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+    log_fh = open(str(log_file), "w", encoding="utf-8")
+    subprocess.Popen(
+        [sys.executable, str(BASE_DIR / "cli.py"), "_dragon_deep_sync", preset],
+        stdout=log_fh, stderr=log_fh,
+        cwd=str(BASE_DIR),
+        creationflags=0x00000008 | 0x08000000,
+        env=env,
+    )
+    _json_out({
+        "status": "accepted",
+        "candidates_count": len(candidates),
+        "preset": preset,
+        "message": f"龙头反抽 AI 深度分析已启动（{len(candidates)} 只候选），用 dragon-progress 查看进度",
+    })
+
+
+def cmd_dragon_scan_deep(preset: str = "balanced"):
+    """完整 Phase 1-4 流水线，后台执行。"""
+    from services.dragon_pullback import is_dragon_running
+
+    if is_dragon_running():
+        _json_out({"status": "running", "message": "龙头反抽任务已在运行中"})
+        return
+
+    env = {**os.environ, "PYTHONUTF8": "1"}
+    log_dir = BASE_DIR / "storage" / "dragon_pullback"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / f"full_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+    log_fh = open(str(log_file), "w", encoding="utf-8")
+    subprocess.Popen(
+        [sys.executable, str(BASE_DIR / "cli.py"), "_dragon_full_sync", preset],
+        stdout=log_fh, stderr=log_fh,
+        cwd=str(BASE_DIR),
+        creationflags=0x00000008 | 0x08000000,
+        env=env,
+    )
+    _json_out({
+        "status": "accepted",
+        "preset": preset,
+        "message": "龙头反抽完整扫描已启动（量化筛选+AI深度），用 dragon-progress 查看进度",
+    })
+
+
+def cmd_dragon_progress():
+    """查看龙头反抽后台任务进度。"""
+    from services.dragon_pullback import get_dragon_status
+    status = get_dragon_status()
+    if status is None:
+        _json_out({"status": "idle", "message": "无运行中的龙头反抽任务"})
+    else:
+        _json_out(status)
+
+
+def cmd_dragon_query():
+    """查看最新龙头反抽结果。"""
+    from services.dragon_pullback import get_latest_result, get_latest_candidates
+
+    result = get_latest_result()
+    if result:
+        _json_out(result)
+        return
+
+    # 没有完整结果，尝试返回候选列表
+    candidates = get_latest_candidates()
+    if candidates:
+        _json_out({
+            "status": "partial",
+            "message": "仅有量化扫描结果（AI 深度分析尚未完成）",
+            "candidates": [
+                {
+                    "name": c.get("name", ""),
+                    "code": c["ts_code"].split(".")[0],
+                    "streak": c.get("max_streak"),
+                    "pullback_pct": round(c.get("pullback_pct", 0), 1),
+                    "stabilization_score": c.get("stabilization_score", 0),
+                }
+                for c in candidates
+            ],
+        })
+        return
+
+    _json_out({"status": "empty", "message": "无当日龙头反抽数据，请先执行 dragon-scan 或 dragon-scan-deep"})
+
+
+def cmd_dragon_deep_sync(preset: str = "balanced"):
+    """后台执行 Phase 4 AI 深度分析（内部命令）。"""
+    import logging as _logging
+    _logging.basicConfig(level=_logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    from services.dragon_pullback import get_latest_candidates, run_ai_deep, _write_status, _send_dragon_email
+    candidates = get_latest_candidates()
+    if not candidates:
+        _write_status({"status": "error", "phase": "无候选数据"})
+        return
+    _write_status({"status": "running", "phase": "Phase 4 AI 深度分析",
+                    "candidates_count": len(candidates)})
+    result = run_ai_deep(candidates, preset,
+                         progress_cb=lambda msg: logger.info(msg))
+    _send_dragon_email(result)
+    _write_status({"status": "done", "phase": "完成",
+                    "result_summary": {"ranking": result.get("ranking", [])},
+                    "finished": datetime.now().isoformat()})
+
+
+def cmd_dragon_full_sync(preset: str = "balanced"):
+    """后台执行完整 Phase 1-4 流水线（内部命令）。"""
+    import logging as _logging
+    _logging.basicConfig(level=_logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    from services.dragon_pullback import run_dragon_full
+    run_dragon_full(preset, progress_cb=lambda msg: logger.info(msg))
+
+
+def cmd_dragon_backtest(start: str = "", end: str = ""):
+    """龙头反抽策略历史回测（后台执行）。"""
+    from services.dragon_pullback import is_dragon_running
+    if is_dragon_running():
+        _json_out({"status": "running", "message": "龙头反抽任务已在运行中"})
+        return
+
+    env = {**os.environ, "PYTHONUTF8": "1"}
+    log_dir = BASE_DIR / "storage" / "dragon_pullback"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / f"backtest_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+    log_fh = open(str(log_file), "w", encoding="utf-8")
+    args = [sys.executable, str(BASE_DIR / "cli.py"), "_dragon_backtest_sync"]
+    if start:
+        args.append(start)
+    if end:
+        args.append(end)
+    subprocess.Popen(
+        args, stdout=log_fh, stderr=log_fh,
+        cwd=str(BASE_DIR),
+        creationflags=0x00000008 | 0x08000000,
+        env=env,
+    )
+    _json_out({
+        "status": "accepted",
+        "message": f"龙头反抽回测已启动{'(' + start + '~' + end + ')' if start else '(近6个月)'}，用 dragon-progress 查看进度",
+    })
+
+
+def cmd_dragon_backtest_sync(start: str = "", end: str = ""):
+    """后台执行回测（内部命令）。"""
+    import logging as _logging
+    _logging.basicConfig(level=_logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    from services.dragon_pullback import run_backtest, _write_status
+    _write_status({"status": "running", "phase": "历史回测"})
+    result = run_backtest(start, end, progress_cb=lambda msg: logger.info(msg))
+    _write_status({"status": "done", "phase": "回测完成",
+                    "result_summary": result.get("stats", {}),
+                    "finished": datetime.now().isoformat()})
+    _json_out(result.get("stats", {}))
+
+
+def cmd_dragon_train(months: str = "6"):
+    """龙头反抽四轮自学习（后台执行）。"""
+    from services.dragon_pullback import is_dragon_running
+    if is_dragon_running():
+        _json_out({"status": "running", "message": "龙头反抽任务已在运行中"})
+        return
+
+    env = {**os.environ, "PYTHONUTF8": "1"}
+    log_dir = BASE_DIR / "storage" / "dragon_pullback"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / f"train_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+    log_fh = open(str(log_file), "w", encoding="utf-8")
+    subprocess.Popen(
+        [sys.executable, str(BASE_DIR / "cli.py"), "_dragon_train_sync", months],
+        stdout=log_fh, stderr=log_fh,
+        cwd=str(BASE_DIR),
+        creationflags=0x00000008 | 0x08000000,
+        env=env,
+    )
+    _json_out({
+        "status": "accepted",
+        "message": f"龙头反抽自学习已启动（{months}个月数据），用 dragon-progress 查看进度",
+    })
+
+
+def cmd_dragon_train_sync(months: str = "6"):
+    """后台执行自学习（内部命令）。"""
+    import logging as _logging
+    _logging.basicConfig(level=_logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    from services.dragon_pullback import run_dragon_training, _write_status
+    _write_status({"status": "running", "phase": "四轮自学习"})
+    result = run_dragon_training(int(months), progress_cb=lambda msg: logger.info(msg))
+    _write_status({"status": "done", "phase": "自学习完成",
+                    "result_summary": result.get("rounds", {}),
+                    "finished": datetime.now().isoformat()})
+
+
+def cmd_dragon_train_stats():
+    """查看龙头反抽训练统计。"""
+    from services.dragon_pullback import get_training_stats
+    _json_out(get_training_stats())
+
+
 # ── 抖音素材生成 ─────────────────────────────────────────────────
 
 def cmd_douyin_generate(date: str | None = None):
@@ -1526,12 +1779,25 @@ COMMANDS = {
     "portfolio-risk": lambda args: cmd_portfolio_risk(),
     "portfolio-close": lambda args: cmd_portfolio_close(args[0], args[1] if len(args) > 1 else "0", args[2] if len(args) > 2 else "") if args else print("用法: portfolio-close <股票或ID> [平仓价] [原因]"),
     "portfolio-history": lambda args: cmd_portfolio_history(int(args[0]) if args else 20),
+    # ── 龙头反抽 ──
+    "dragon-scan": lambda args: cmd_dragon_scan(),
+    "dragon-deep": lambda args: cmd_dragon_deep(args[0] if args else "balanced"),
+    "dragon-scan-deep": lambda args: cmd_dragon_scan_deep(args[0] if args else "balanced"),
+    "dragon-progress": lambda args: cmd_dragon_progress(),
+    "dragon-query": lambda args: cmd_dragon_query(),
+    "dragon-backtest": lambda args: cmd_dragon_backtest(args[0] if args else "", args[1] if len(args) > 1 else ""),
+    "dragon-train": lambda args: cmd_dragon_train(args[0] if args else "6"),
+    "dragon-train-stats": lambda args: cmd_dragon_train_stats(),
     # 内部后台命令（不对外暴露）
     "_top10_sync": lambda args: cmd_top10_sync(),
     "_top100_review_sync": lambda args: cmd_top100_review_sync(),
     "_sentiment_sync": lambda args: cmd_sentiment_sync(),
     "_event_deep_sync": lambda args: cmd_event_deep_sync(args[0], args[1] if len(args) > 1 else "gemini") if args else None,
     "_douyin_learn_sync": lambda args: cmd_douyin_learn(args[0], args[1] if len(args) > 1 else None) if args else None,
+    "_dragon_deep_sync": lambda args: cmd_dragon_deep_sync(args[0] if args else "balanced"),
+    "_dragon_full_sync": lambda args: cmd_dragon_full_sync(args[0] if args else "balanced"),
+    "_dragon_backtest_sync": lambda args: cmd_dragon_backtest_sync(args[0] if args else "", args[1] if len(args) > 1 else ""),
+    "_dragon_train_sync": lambda args: cmd_dragon_train_sync(args[0] if args else "6"),
 }
 
 if __name__ == "__main__":
