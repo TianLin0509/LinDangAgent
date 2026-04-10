@@ -11,15 +11,19 @@ from typing import Optional
 _TREE_PATH = Path(__file__).resolve().parent.parent / "data" / "knowledge" / "decision_tree.json"
 _cache: Optional[dict] = None
 
+_DIMS = ("基本面", "预期差", "资金面", "技术面")
+
 
 def load_tree(path=None) -> dict:
     """Load and cache the JSON config. Returns the full config dict."""
     global _cache
-    if _cache is not None:
-        return _cache
-    target = Path(path) if path else _TREE_PATH
-    with open(target, encoding="utf-8") as f:
-        _cache = json.load(f)
+    if _cache is None or path is not None:
+        target = Path(path) if path else _TREE_PATH
+        with open(target, encoding="utf-8") as f:
+            data = json.load(f)
+        if path is None:
+            _cache = data
+        return data
     return _cache
 
 
@@ -93,7 +97,7 @@ def apply_corrections(scores: dict, rules: dict, high_prob_fatal_count: int = 0)
         composite = min(composite, fundamental_cap)
         result["_fundamental_breaker"] = True
     # Rule 4: bucket effect — only if fundamental breaker not triggered
-    elif any(v <= 30 for k, v in scores.items() if not k.startswith("_")):
+    elif any(scores.get(d, 100) <= 30 for d in _DIMS):
         composite = min(composite, bucket_cap)
         result["_bucket_capped"] = True
 
@@ -102,6 +106,7 @@ def apply_corrections(scores: dict, rules: dict, high_prob_fatal_count: int = 0)
         composite = min(composite, premortem_cap_val)
         result["_premortem_cap"] = True
 
+    composite = max(0.0, min(100.0, composite))
     result["_final"] = round(composite, 1)
     return result
 

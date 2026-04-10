@@ -10,6 +10,7 @@ from services.decision_tree import (
     apply_corrections,
     format_tree_for_prompt,
     record_tree_path,
+    _DIMS,
 )
 
 
@@ -91,3 +92,22 @@ def test_record_tree_path():
     assert path == "预期差: 是→A类→30天内→未定价→单季超预期→75分"
     assert "预期差" in path
     assert "75分" in path
+
+
+def test_compute_weighted_partial_scores():
+    """Only 3 dimensions provided (missing 基本面); normalization uses sum of present weights."""
+    scores = {"预期差": 80, "资金面": 70, "技术面": 65}
+    weights = {"基本面": 0.10, "预期差": 0.40, "资金面": 0.30, "技术面": 0.20}
+    result = compute_weighted(scores, weights)
+    # Only 预期差, 资金面, 技术面 contribute; effective weights sum to 0.90
+    # (80*0.40 + 70*0.30 + 65*0.20) / 0.90 = (32 + 21 + 13) / 0.90 = 66/0.90 ≈ 73.3
+    expected = round(66 / 0.90, 1)
+    assert result == pytest.approx(expected, abs=0.1)
+
+
+def test_bucket_effect_ignores_non_dim_keys():
+    """Extra non-dimension key 'rank': 5 must NOT trigger bucket effect."""
+    # All 4 known dimensions are >= 50, so bucket must not fire.
+    scores = {"基本面": 60, "预期差": 70, "资金面": 55, "技术面": 50, "rank": 5}
+    result = apply_corrections(scores, {})
+    assert result.get("_bucket_capped") is not True
