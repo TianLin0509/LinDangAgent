@@ -1751,6 +1751,32 @@ def cmd_review(args: list):
     _json_out(result)
 
 
+def cmd_apply_weights(args: list):
+    """应用最新的权重调节建议。"""
+    import json as _json
+    from pathlib import Path as _Path
+    reports_dir = _Path("C:/LinDangAgent/data/knowledge/evolution_reports")
+    if not reports_dir.exists():
+        _json_out({"status": "no_reports_dir"})
+        return
+    reports = sorted(reports_dir.glob("*_health.json"), reverse=True)
+    for rp in reports:
+        with open(rp, encoding="utf-8") as f:
+            report = _json.load(f)
+        proposal = report.get("weight_proposal")
+        if proposal and proposal.get("status") == "pending_approval":
+            print(f"找到待审批建议: {rp.name}")
+            print(_json.dumps(proposal, ensure_ascii=False, indent=2))
+            from knowledge.evolution_engine import apply_weight_change
+            apply_weight_change(proposal["new_weights"])
+            proposal["status"] = "applied"
+            with open(rp, "w", encoding="utf-8") as f:
+                _json.dump(report, f, ensure_ascii=False, indent=2)
+            _json_out({"status": "applied", "new_weights": proposal["new_weights"]})
+            return
+    _json_out({"status": "no_pending_proposal"})
+
+
 # ── 命令路由 ─────────────────────────────────────────────────────
 
 COMMANDS = {
@@ -1808,6 +1834,7 @@ COMMANDS = {
     "news-scan": lambda args: cmd_news_scan(int(args[0]) if args else 3),
     "session-snapshot": lambda args: cmd_session_snapshot(" ".join(args) if args else ""),
     "regenerate-state": lambda args: cmd_regenerate_state(),
+    "apply-weights": lambda args: cmd_apply_weights(args),
     # ── 持仓与风控 ──
     "portfolio-add": lambda args: cmd_portfolio_add(args[0], args[1], args[2], args[3] if len(args) > 3 else "0", args[4] if len(args) > 4 else "0") if len(args) >= 3 else print("用法: portfolio-add <股票> <价格> <数量> [止损] [止盈]"),
     "portfolio-list": lambda args: cmd_portfolio_list(),

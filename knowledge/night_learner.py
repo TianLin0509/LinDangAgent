@@ -81,6 +81,17 @@ def round1_scan() -> dict:
     except Exception as exc:
         logger.debug("[night] kline backtest: %r", exc)
 
+    # Channel B: Evolution engine backtesting
+    try:
+        from knowledge.evolution_engine import run_nightly_backtest, send_weight_proposal_email
+        backtest_result = run_nightly_backtest()
+        if backtest_result.get("weight_proposal"):
+            send_weight_proposal_email(backtest_result["weight_proposal"])
+            logger.info("Weight proposal generated and emailed")
+        results["backtest"] = backtest_result
+    except Exception as e:
+        logger.warning("Nightly backtest failed: %s", e)
+
     return results
 
 
