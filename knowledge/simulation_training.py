@@ -1,6 +1,11 @@
 # -*- coding: utf-8 -*-
-"""模拟训练 — AlphaGo 式自我对弈
+"""模拟训练 — AlphaGo 式自我对弈 [DEPRECATED]
 
+⚠️ 此模块已被统一学习引擎 (knowledge/learning_engine.py) 取代。
+新入口: python cli.py learn general <count>
+保留原因: Phase 2-4 迁移完成前，sim-train CLI 命令仍可用。
+
+原始说明:
 用历史数据模拟分析 → 对比已知结果 → 生成教训 → 存入 case_memory。
 一个晚上的模拟训练 = 几周的真实分析积累。
 
@@ -142,11 +147,9 @@ _PROXY = "http://127.0.0.1:7890"
 
 
 def _clear_proxy():
-    """确保代理指向 Clash（Clash 规则会让国内域名走 DIRECT）。
-    不能清除代理——Windows 系统代理无法通过环境变量绕过。
-    """
-    os.environ["HTTP_PROXY"] = _PROXY
-    os.environ["HTTPS_PROXY"] = _PROXY
+    """获取国内数据源前临时移除代理（新浪/akshare/baostock 直连更快）。"""
+    os.environ.pop("HTTP_PROXY", None)
+    os.environ.pop("HTTPS_PROXY", None)
     os.environ.pop("NO_PROXY", None)
 
 
@@ -191,7 +194,7 @@ def _fetch_historical_kline(ts_code: str, end_date: str, days: int = 120) -> pd.
         symbol = f"{market}{code}"
 
         s = requests.Session()
-        # 走 Clash 代理（Clash 规则让 sina.cn 走 DIRECT）
+        s.trust_env = False  # 国内源不走代理，直连更快
         url = "https://quotes.sina.cn/cn/api/jsonp_v2.php/var/CN_MarketDataService.getKLineData"
         r = s.get(url, params={"symbol": symbol, "scale": "240", "ma": "no", "datalen": str(days)},
                   timeout=15, headers={"Referer": "https://finance.sina.com.cn"})
@@ -433,45 +436,29 @@ def _select_exam_stocks(count: int = 5, sector_focus: str = "",
         except Exception as exc:
             logger.debug("[sim] sector filter failed: %r", exc)
 
-    # 分类选题（预先过滤，避免重复计算）
+    # 分类标记（所有股票都可参与训练，不再过滤丢弃）
+    def _categorize(ret: float) -> str:
+        if ret > 10:
+            return "big_rise"
+        elif ret > 3:
+            return "rise"
+        elif ret > -3:
+            return "flat"
+        elif ret > -8:
+            return "fall"
+        else:
+            return "big_fall"
+
     candidates = []
-
-    rise_df = merged[merged["return_10d"] > 10]
-    fall_df = merged[merged["return_10d"] < -8]
-    flat_df = merged[(merged["return_10d"] > -3) & (merged["return_10d"] < 3)]
-
-    # 大涨股
-    n_rise = min(count // 2 + 1, len(rise_df))
-    if n_rise > 0:
-        for _, row in rise_df.sample(n=n_rise).iterrows():
-            candidates.append({
-                "ts_code": row["ts_code"], "stock_name": row.get("stock_name", row["ts_code"]),
-                "exam_date": row.get("exam_date", exam_date),
-                "close_on_exam": row["close"],
-                "actual_return_10d": round(row["return_10d"], 2), "category": "big_rise",
-            })
-
-    # 大跌股
-    n_fall = min(count // 3 + 1, len(fall_df))
-    if n_fall > 0:
-        for _, row in fall_df.sample(n=n_fall).iterrows():
-            candidates.append({
-                "ts_code": row["ts_code"], "stock_name": row.get("stock_name", row["ts_code"]),
-                "exam_date": row.get("exam_date", exam_date),
-                "close_on_exam": row["close"],
-                "actual_return_10d": round(row["return_10d"], 2), "category": "big_fall",
-            })
-
-    # 震荡股
-    n_flat = min(count // 3, len(flat_df))
-    if n_flat > 0:
-        for _, row in flat_df.sample(n=n_flat).iterrows():
-            candidates.append({
-                "ts_code": row["ts_code"], "stock_name": row.get("stock_name", row["ts_code"]),
-                "exam_date": row.get("exam_date", exam_date),
-                "close_on_exam": row["close"],
-                "actual_return_10d": round(row["return_10d"], 2), "category": "flat",
-            })
+    for _, row in merged.iterrows():
+        candidates.append({
+            "ts_code": row["ts_code"],
+            "stock_name": row.get("stock_name", row["ts_code"]),
+            "exam_date": row.get("exam_date", exam_date),
+            "close_on_exam": row["close"],
+            "actual_return_10d": round(row["return_10d"], 2),
+            "category": _categorize(row["return_10d"]),
+        })
 
     random.shuffle(candidates)
     return candidates[:count]
