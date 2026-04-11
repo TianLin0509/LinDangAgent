@@ -147,7 +147,7 @@ def _apply_filters(stock: dict, exam_date: str) -> bool:
 
     ts_code = stock["ts_code"]
     try:
-        df = _fetch_historical_kline(ts_code, exam_date, days=30)
+        df = _fetch_historical_kline(ts_code, exam_date, days=60)
         if df is None or len(df) < 10:
             return False
 
@@ -174,6 +174,9 @@ def select_exam_stocks(count: int) -> list[dict]:
 
     返回: [{ts_code, stock_name, exam_date, source}, ...]
     """
+    from knowledge.simulation_training import _clear_proxy, _restore_proxy
+    _clear_proxy()  # 国内数据源不走代理
+
     n_familiar = int(count * FAMILIAR_RATIO)
     n_explore = count - n_familiar
 
@@ -206,6 +209,8 @@ def select_exam_stocks(count: int) -> list[dict]:
             selected.append(stock)
             date_idx += 1
 
+    _restore_proxy()  # 恢复代理（Claude API 需要）
+
     logger.info("[learn] selected %d exam stocks (%d familiar, %d explore)",
                 len(selected),
                 sum(1 for s in selected if s.get("source") == "reports"),
@@ -233,7 +238,9 @@ def run_single_backtest(exam: dict, progress_cb=None) -> dict | None:
     if progress_cb:
         progress_cb(f"回测 {stock_name} ({exam_date})...")
 
-    # 获取实际 T+10 收益
+    # 获取实际 T+10 收益（国内数据源不走代理）
+    from knowledge.simulation_training import _clear_proxy, _restore_proxy
+    _clear_proxy()
     try:
         df = _fetch_historical_kline(ts_code, datetime.now().strftime("%Y%m%d"), days=120)
         actual_return = _calc_return_from_kline(df, exam_date)
@@ -242,7 +249,10 @@ def run_single_backtest(exam: dict, progress_cb=None) -> dict | None:
             return None
     except Exception as exc:
         logger.warning("[learn] return calc failed for %s: %s", stock_name, exc)
+        _restore_proxy()
         return None
+
+    _restore_proxy()  # 恢复代理（war_room 调用 Claude 需要）
 
     # 完整 war_room 分析（时间锁定）
     try:
@@ -263,9 +273,11 @@ def run_single_backtest(exam: dict, progress_cb=None) -> dict | None:
     weighted = scores.get("综合加权", 50)
     direction = "bullish" if weighted >= 55 else ("bearish" if weighted <= 45 else "neutral")
 
-    # 三级归因
+    # 三级归因（国内数据源不走代理）
+    _clear_proxy()
     market_return = _get_market_return(exam_date)
     sector_return, sector_name = _get_sector_return(ts_code, exam_date)
+    _restore_proxy()
     benchmark = max(market_return, sector_return) if sector_return != 0 else market_return
     excess_return = actual_return - benchmark
     stock_alpha = actual_return - (sector_return if sector_return != 0 else market_return)
