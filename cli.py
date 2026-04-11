@@ -1549,6 +1549,33 @@ def cmd_night_learn(phase: str = "all"):
     _json_out({"status": "ok", **result})
 
 
+def cmd_learn(args: list[str]):
+    """统一学习引擎: learn <mode> [count] [delay]"""
+    if not args:
+        _json_out({"error": "用法: learn <general|dragon|weights|full|approve-prompt> [count] [delay]"})
+        return
+
+    mode = args[0]
+
+    if mode == "approve-prompt":
+        from knowledge.learning_engine import approve_prompt_patches
+        result = approve_prompt_patches(progress_cb=lambda msg: print(f"  {msg}"))
+        _json_out(result)
+        return
+
+    count = int(args[1]) if len(args) > 1 else 50
+    delay = int(args[2]) if len(args) > 2 else 30
+
+    from knowledge.learning_engine import run_learning_cycle
+    result = run_learning_cycle(
+        mode=mode,
+        count=count,
+        delay_between=delay,
+        progress_cb=lambda msg: print(f"  {msg}"),
+    )
+    _json_out(result)
+
+
 # ── 新闻监控 ─────────────────────────────────────────────────────
 
 def cmd_news_scan(max_analyze: int = 3):
@@ -1831,6 +1858,7 @@ COMMANDS = {
     "sim-train": lambda args: cmd_sim_train(int(args[0]) if args else 5, args[1] if len(args) > 1 else ""),
     "sim-stats": lambda args: cmd_sim_stats(),
     "night-learn": lambda args: cmd_night_learn(args[0] if args else "all"),
+    "learn": lambda args: cmd_learn(args),
     "news-scan": lambda args: cmd_news_scan(int(args[0]) if args else 3),
     "session-snapshot": lambda args: cmd_session_snapshot(" ".join(args) if args else ""),
     "regenerate-state": lambda args: cmd_regenerate_state(),
