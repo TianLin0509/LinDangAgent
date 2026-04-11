@@ -731,7 +731,7 @@ _report_context_cache_date: str = ""
 _report_context_cache_lock = threading.Lock()
 
 
-def build_report_context(ts_code: str, name: str, progress_cb=None) -> tuple[dict, dict]:
+def build_report_context(ts_code: str, name: str, progress_cb=None, time_lock: str = "") -> tuple[dict, dict]:
     """采集全量数据，返回 (context_dict, raw_data_dict)
 
     context_dict: 可直接注入 prompt 的文本字典
@@ -743,17 +743,21 @@ def build_report_context(ts_code: str, name: str, progress_cb=None) -> tuple[dic
     global _report_context_cache, _report_context_cache_date
     from datetime import datetime
 
-    today_date = datetime.now().strftime("%Y-%m-%d")
-    with _report_context_cache_lock:
-        # 跨日清空缓存
-        if _report_context_cache_date != today_date:
-            _report_context_cache.clear()
-            _report_context_cache_date = today_date
+    if time_lock:
+        # Backtesting: don't use cache (different dates per call)
+        pass
+    else:
+        today_date = datetime.now().strftime("%Y-%m-%d")
+        with _report_context_cache_lock:
+            # 跨日清空缓存
+            if _report_context_cache_date != today_date:
+                _report_context_cache.clear()
+                _report_context_cache_date = today_date
 
-        # 命中缓存直接返回
-        if ts_code in _report_context_cache:
-            logger.info("[report_data] cache hit for %s, skip 18 API calls", ts_code)
-            return _report_context_cache[ts_code]
+            # 命中缓存直接返回
+            if ts_code in _report_context_cache:
+                logger.info("[report_data] cache hit for %s, skip 18 API calls", ts_code)
+                return _report_context_cache[ts_code]
 
     raw = {}
     ctx = {}
@@ -831,6 +835,34 @@ def build_report_context(ts_code: str, name: str, progress_cb=None) -> tuple[dic
     }
 
     _run_batch(batch3_tasks, "batch3", timeout=30)
+
+    # ── time_lock 过滤：回测模式下只保留截止日期前的数据 ──────────────
+    if time_lock:
+        import pandas as _pd_tl
+
+        def _time_filter(df, date_col="trade_date"):
+            """Filter DataFrame to only include data up to time_lock."""
+            if df is None:
+                return df
+            if not isinstance(df, _pd_tl.DataFrame) or df.empty:
+                return df
+            if date_col in df.columns:
+                col = df[date_col].astype(str).str.replace("-", "", regex=False)
+                return df[col <= time_lock].copy()
+            return df
+
+        # 价格数据
+        if raw.get("price") is not None:
+            raw["price"] = _time_filter(raw["price"], "trade_date")
+
+        # 财务三表 + 财务指标（按公告日或报告期过滤）
+        for _key in ["income", "balance", "cashflow", "fina_ind"]:
+            _df = raw.get(_key)
+            if _df is not None and isinstance(_df, _pd_tl.DataFrame) and not _df.empty:
+                for _col in ["ann_date", "end_date", "f_ann_date"]:
+                    if _col in _df.columns:
+                        raw[_key] = _time_filter(_df, _col)
+                        break
 
     _progress("计算衍生指标...")
 
@@ -957,9 +989,10 @@ def build_report_context(ts_code: str, name: str, progress_cb=None) -> tuple[dic
 
     _progress("数据采集完成！")
 
-    # 写入当日缓存
-    with _report_context_cache_lock:
-        _report_context_cache[ts_code] = (ctx, raw)
+    # 写入当日缓存（回测模式不写入，避免污染缓存）
+    if not time_lock:
+        with _report_context_cache_lock:
+            _report_context_cache[ts_code] = (ctx, raw)
 
     return ctx, raw
 

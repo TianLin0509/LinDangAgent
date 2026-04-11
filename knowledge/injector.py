@@ -27,6 +27,7 @@ def build_knowledge_context(
     max_chars: int = 4000,
     price_snapshot: str = "",
     indicators: dict | None = None,
+    time_lock: str = "",  # NEW: data cutoff date YYYYMMDD
 ) -> str:
     """构建知识库参考段落（主入口）。
 
@@ -35,7 +36,7 @@ def build_knowledge_context(
     """
     # 第一层：收集候选池 + 股票画像
     profile = _build_stock_profile(stock_code, stock_name, price_snapshot, indicators)
-    candidates = _collect_knowledge_candidates(stock_code, stock_name, scores, model_name)
+    candidates = _collect_knowledge_candidates(stock_code, stock_name, scores, model_name, time_lock=time_lock)
 
     if not candidates:
         return ""
@@ -146,7 +147,8 @@ def _build_stock_profile(stock_code: str, stock_name: str,
 
 
 def _collect_knowledge_candidates(stock_code: str, stock_name: str,
-                                  scores: dict | None, model_name: str) -> list[dict]:
+                                  scores: dict | None, model_name: str,
+                                  time_lock: str = "") -> list[dict]:
     """从所有知识库收集候选知识，返回带类型和内容的列表。"""
     candidates = []
 
@@ -389,7 +391,7 @@ def _collect_knowledge_candidates(stock_code: str, stock_name: str,
         logger.debug("[candidates] wisdom: %r", exc)
 
     # ── 9. 近期情报 ──────────────────────────────────────────
-    if sector_tags:
+    if sector_tags and not time_lock:
         try:
             from knowledge.intel_memory import query_by_sectors
             intels = query_by_sectors(sector_tags, days=30)
@@ -409,17 +411,18 @@ def _collect_knowledge_candidates(stock_code: str, stock_name: str,
             logger.debug("[candidates] intel: %r", exc)
 
     # ── 10. 宏观简报 ─────────────────────────────────────────
-    try:
-        from data.macro_intel import get_macro_context
-        _, macro_brief = get_macro_context()
-        if macro_brief and len(macro_brief) > 20:
-            candidates.append({
-                "type": "宏观简报",
-                "priority": 3,
-                "content": macro_brief[:400],
-            })
-    except Exception as exc:
-        logger.debug("[injector] belief candidate failed: %r", exc)
+    if not time_lock:
+        try:
+            from data.macro_intel import get_macro_context
+            _, macro_brief = get_macro_context()
+            if macro_brief and len(macro_brief) > 20:
+                candidates.append({
+                    "type": "宏观简报",
+                    "priority": 3,
+                    "content": macro_brief[:400],
+                })
+        except Exception as exc:
+            logger.debug("[injector] belief candidate failed: %r", exc)
 
     return candidates
 

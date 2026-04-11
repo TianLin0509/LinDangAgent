@@ -363,6 +363,8 @@ def run_war_room(
     username: str = "cli",
     preset: str = DEFAULT_PRESET,
     skip_extra_recon: bool = False,
+    time_lock: str = "",            # NEW: data cutoff date YYYYMMDD
+    skip_report_save: bool = False,  # NEW: don't write to reports.db
 ) -> WarRoomResult:
     """Main entry point for stock analysis.
 
@@ -377,13 +379,15 @@ def run_war_room(
     if cfg.get("_legacy"):
         return _run_war_room_legacy(stock_name, username, preset, skip_extra_recon)
 
-    return _run_war_room_v2(stock_name, username, cfg)
+    return _run_war_room_v2(stock_name, username, cfg, time_lock=time_lock, skip_report_save=skip_report_save)
 
 
 def _run_war_room_v2(
     stock_name: str,
     username: str,
     preset_cfg: dict,
+    time_lock: str = "",
+    skip_report_save: bool = False,
 ) -> WarRoomResult:
     """2-round Opus deep analysis flow."""
     from data.indicators import compute_indicators, format_indicators_section
@@ -404,50 +408,54 @@ def _run_war_room_v2(
     if not ts_code:
         raise ValueError(f"未识别到股票：{stock_name}")
 
-    # 舆情并行采集
-    _sentiment_result = [None]
-    import threading
-    def _sentiment_worker():
-        try:
-            from data.stock_sentiment import fetch_stock_sentiment
-            _sentiment_result[0] = fetch_stock_sentiment(ts_code=ts_code, stock_name=resolved_name)
-        except Exception as exc:
-            logger.debug("[war_room_v2] sentiment worker failed: %s", exc)
-
-    sentiment_thread = threading.Thread(target=_sentiment_worker, daemon=True)
-    sentiment_thread.start()
-
     from data.macro_intel import get_macro_context
-    context, raw_data = build_report_context(ts_code, resolved_name)
+    context, raw_data = build_report_context(ts_code, resolved_name, time_lock=time_lock)
     price_df = raw_data.get("_price_df")
     indicators = compute_indicators(price_df) if price_df is not None and not price_df.empty else {}
     indicators_section = format_indicators_section(indicators)
     snap = context.get("price_summary", "")
     knowledge_ctx = build_knowledge_context(
         stock_code=ts_code, stock_name=resolved_name, model_name=analyst_model,
-        price_snapshot=snap, indicators=indicators,
+        price_snapshot=snap, indicators=indicators, time_lock=time_lock,
     )
 
-    # 等待舆情
-    sentiment_ctx = ""
-    if sentiment_thread.is_alive():
-        sentiment_thread.join(timeout=30)
-    if _sentiment_result[0]:
+    if not time_lock:
+        # 舆情并行采集
+        _sentiment_result = [None]
+        import threading
+        def _sentiment_worker():
+            try:
+                from data.stock_sentiment import fetch_stock_sentiment
+                _sentiment_result[0] = fetch_stock_sentiment(ts_code=ts_code, stock_name=resolved_name)
+            except Exception as exc:
+                logger.debug("[war_room_v2] sentiment worker failed: %s", exc)
+
+        sentiment_thread = threading.Thread(target=_sentiment_worker, daemon=True)
+        sentiment_thread.start()
+
+        # 等待舆情
+        sentiment_ctx = ""
+        if sentiment_thread.is_alive():
+            sentiment_thread.join(timeout=30)
+        if _sentiment_result[0]:
+            try:
+                from data.stock_sentiment import format_sentiment_for_prompt
+                sentiment_ctx = format_sentiment_for_prompt(_sentiment_result[0])
+            except Exception:
+                pass
+        if not sentiment_ctx or sentiment_ctx.strip() == "【雪球舆情参考】":
+            sentiment_ctx = "（舆情数据采集失败或不足，请以基本面和技术面为主要判断依据）"
+
+        macro_full, macro_brief = "", ""
         try:
-            from data.stock_sentiment import format_sentiment_for_prompt
-            sentiment_ctx = format_sentiment_for_prompt(_sentiment_result[0])
+            macro_full, macro_brief = get_macro_context()
         except Exception:
             pass
-    if not sentiment_ctx or sentiment_ctx.strip() == "【雪球舆情参考】":
-        sentiment_ctx = "（舆情数据采集失败或不足，请以基本面和技术面为主要判断依据）"
-
-    macro_full, macro_brief = "", ""
-    try:
-        macro_full, macro_brief = get_macro_context()
-    except Exception:
-        pass
-    if not macro_brief:
-        macro_brief = "（宏观数据采集失败，请以个股基本面为主要判断依据）"
+        if not macro_brief:
+            macro_brief = "（宏观数据采集失败，请以个股基本面为主要判断依据）"
+    else:
+        sentiment_ctx = "（回测模式：舆情数据不注入）"
+        macro_brief = "（回测模式：宏观数据不注入）"
 
     # 构建数据包（复用现有函数）
     from ai.prompts_report import build_war_room_prompts
@@ -463,8 +471,10 @@ def _run_war_room_v2(
     )
 
     # 注入每日大盘深度分析（当日首次触发 Opus 分析，后续缓存）
-    from services.market_analysis import get_or_run_market_analysis
-    market_md = get_or_run_market_analysis(analyst_model)
+    market_md = ""
+    if not time_lock:
+        from services.market_analysis import get_or_run_market_analysis
+        market_md = get_or_run_market_analysis(analyst_model)
     if market_md:
         full_data_brief = market_md + "\n\n" + full_data_brief
 
@@ -515,20 +525,22 @@ def _run_war_room_v2(
     logger.info("[war_room_v2] Phase 3: 组装报告")
     combined_md = _build_v2_report(resolved_name, round1_text, round2_text, final_scores)
 
-    try:
-        init_db()
-        save_report(
-            report_id=report_id,
-            openid="war_room",
-            stock_name=resolved_name,
-            stock_code=ts_code,
-            summary=final_scores.get("_rating", "分析完成"),
-            markdown_text=combined_md,
-        )
-    except Exception as exc:
-        logger.error("[war_room_v2] save_report failed: %r", exc)
+    if not skip_report_save:
+        try:
+            init_db()
+            save_report(
+                report_id=report_id,
+                openid="war_room",
+                stock_name=resolved_name,
+                stock_code=ts_code,
+                summary=final_scores.get("_rating", "分析完成"),
+                markdown_text=combined_md,
+            )
+        except Exception as exc:
+            logger.error("[war_room_v2] save_report failed: %r", exc)
 
-    _save_v2_tracker(report_id, resolved_name, ts_code, round1_scores, final_scores, round1_text, round2_text)
+    if not skip_report_save:
+        _save_v2_tracker(report_id, resolved_name, ts_code, round1_scores, final_scores, round1_text, round2_text)
 
     result = WarRoomResult(
         stock_name=resolved_name,
