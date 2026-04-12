@@ -196,18 +196,40 @@ def select_exam_stocks(count: int) -> list[dict]:
     exam_dates = _generate_exam_dates(count)
 
     # 组合选题 + 过滤
+    # reports 来源：用户已分析过，默认符合标准，跳过过滤（节省时间）
+    # explore 来源：全市场随机，需要 filter 验证流动性/波动性
     candidates = familiar + explore
     selected = []
     date_idx = 0
+    tried = 0
+    skipped_filter = 0
 
     for stock in candidates:
         if len(selected) >= count:
             break
         exam_date = exam_dates[date_idx % len(exam_dates)]
-        if _apply_filters(stock, exam_date):
+        tried += 1
+        src = stock.get("source", "")
+
+        # reports 来源跳过过滤
+        if src == "reports":
             stock["exam_date"] = exam_date
             selected.append(stock)
             date_idx += 1
+            skipped_filter += 1
+            continue
+
+        # explore 来源需要 filter
+        try:
+            if _apply_filters(stock, exam_date):
+                stock["exam_date"] = exam_date
+                selected.append(stock)
+                date_idx += 1
+        except Exception as exc:
+            logger.debug("[learn] filter failed for %s: %s", stock.get("ts_code"), exc)
+
+    logger.info("[learn] candidates=%d, tried=%d, selected=%d (skipped filter=%d)",
+                len(candidates), tried, len(selected), skipped_filter)
 
     _restore_proxy()  # 恢复代理（Claude API 需要）
 
