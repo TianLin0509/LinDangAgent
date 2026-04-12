@@ -196,7 +196,7 @@ def build_summary_markdown(result: dict) -> str:
                 lines.append(f"- **风险**: {risk[:200]}")
             lines.append("")
 
-    # ── Round 3: 交叉审视 ────────────────────────────────────
+    # ── Round 3: 交叉审视（含完整审计轨迹）────────────────────
     r3 = rounds.get("round3", {})
     if r3:
         lines.append("## Round 3: 交叉审视")
@@ -204,15 +204,64 @@ def build_summary_markdown(result: dict) -> str:
         original = r3.get("original_count", 0)
         adopted = r3.get("adopted_count", 0)
         rejected = original - adopted
+        fast_path = r3.get("fast_path", False)
         lines.append(f"- 风控官审查: **{original}** 条 → 通过 **{adopted}** 条, 否决 **{rejected}** 条")
+        if fast_path:
+            lines.append(f"- ⚡ 走快速路径: 质疑者全部通过，跳过答辩和仲裁")
         lines.append("")
-        if r3.get("adopted_proposals"):
-            lines.append("**通过审视的建议:**")
-            for p in r3["adopted_proposals"]:
-                lines.append(f"- [{p.get('id')}] {p.get('type')}: {p.get('target', '?')[:60]}")
+
+        # 质疑者对每条建议的评判
+        verdicts = r3.get("verdicts", [])
+        if verdicts:
+            lines.append("### 🔍 风控官质疑详情")
+            lines.append("")
+            lines.append("| 建议ID | 评判 | 理由 | 疑问 |")
+            lines.append("|--------|------|------|------|")
+            for v in verdicts:
+                pid = v.get("proposal_id", "?")
+                verd = v.get("verdict", "?")
+                icon = {"pass": "✅", "concern": "⚠️", "reject": "❌"}.get(verd, "?")
+                reason = (v.get("reason", "") or "")[:150].replace("|", "\\|")
+                question = (v.get("question", "") or "")[:100].replace("|", "\\|")
+                lines.append(f"| {pid} | {icon} {verd} | {reason} | {question} |")
             lines.append("")
 
-    # ── Round 4: 应用候选配置 ─────────────────────────────────
+        # 答辩记录
+        defenses = r3.get("defenses", [])
+        if defenses:
+            lines.append("### 💬 答辩记录")
+            lines.append("")
+            for d in defenses:
+                pid = d.get("proposal_id", "?")
+                action = d.get("action", "?")
+                icon = {"maintain": "🛡️", "revise": "✏️", "withdraw": "🚫"}.get(action, "?")
+                response = (d.get("response", "") or "")[:200]
+                lines.append(f"- {icon} **{pid}** ({action}): {response}")
+                if action == "revise":
+                    lines.append(f"  - 修改后值: `{d.get('revised_value', '?')}`")
+            lines.append("")
+
+        # 仲裁记录
+        arbitrations = r3.get("arbitrations", [])
+        if arbitrations:
+            lines.append("### ⚖️ 仲裁决定")
+            lines.append("")
+            for a in arbitrations:
+                pid = a.get("proposal_id", "?")
+                dec = a.get("decision", "?")
+                icon = "✅" if dec == "adopt" else "❌"
+                reason = (a.get("reason", "") or "")[:200]
+                lines.append(f"- {icon} **{pid}** → {dec}: {reason}")
+            lines.append("")
+
+        if r3.get("adopted_proposals"):
+            lines.append("### 📋 最终采纳列表")
+            lines.append("")
+            for p in r3["adopted_proposals"]:
+                lines.append(f"- [{p.get('id')}] {p.get('type')}: {p.get('target', '?')[:80]}")
+            lines.append("")
+
+    # ── Round 4: 应用候选配置（含 before/after diff）─────────
     r4 = rounds.get("round4", {})
     if r4:
         lines.append("## Round 4: 应用候选配置")
@@ -220,16 +269,46 @@ def build_summary_markdown(result: dict) -> str:
         applied = r4.get("applied_count", 0)
         errors = r4.get("errors", [])
         has_prompt = r4.get("has_prompt_changes", False)
-        lines.append(f"- 成功应用: **{applied}** 条")
-        if errors:
-            lines.append(f"- 安全边界拒绝: **{len(errors)}** 条")
-            for e in errors[:3]:
-                lines.append(f"  - [{e.get('proposal_id')}] {'; '.join(e.get('errors', []))}")
-        if has_prompt:
-            lines.append(f"- ⏳ 有 prompt 变更 → 已发邮件待你人工审批")
+        lines.append(f"- 成功应用: **{applied}** 条 | 安全拒绝: **{len(errors)}** 条 | Prompt待审批: **{'是' if has_prompt else '否'}**")
         lines.append("")
 
-    # ── Round 5: 验证集对比 ───────────────────────────────────
+        # 每条变更的 before/after
+        diff = r4.get("diff", [])
+        if diff:
+            lines.append("### 📐 配置变更明细")
+            lines.append("")
+            for d in diff:
+                pid = d.get("proposal_id", "?")
+                status = d.get("status", "?")
+                ptype = d.get("type", "?")
+                target = d.get("target", "?")
+                icon = {"applied": "✅", "rejected_safety": "❌", "pending_human_approval": "⏳"}.get(status, "?")
+                lines.append(f"#### {icon} [{pid}] {ptype}: {target}")
+                lines.append("")
+                before = str(d.get("before", ""))[:300]
+                after = str(d.get("after", ""))[:300]
+                lines.append(f"- **修改前**: `{before}`")
+                lines.append(f"- **修改后**: `{after}`")
+                if status == "rejected_safety":
+                    errs = d.get("errors", [])
+                    if errs:
+                        lines.append(f"- **拒绝原因**: {'; '.join(errs)}")
+                lines.append("")
+
+        # Prompt 待审批（特殊强调）
+        prompts = r4.get("prompt_proposals", [])
+        if prompts:
+            lines.append("### ⏳ 待你人工审批的 Prompt 变更")
+            lines.append("")
+            lines.append(f"> 运行 `python cli.py learn approve-prompt` 来审批。超过 7 天未审批自动过期。")
+            lines.append("")
+            for p in prompts:
+                lines.append(f"- **[{p.get('id')}]** {p.get('target', '?')}")
+                lines.append(f"  - 理由: {p.get('evidence', '')[:200]}")
+                lines.append(f"  - 提议内容: `{str(p.get('proposed_value', ''))[:200]}`")
+            lines.append("")
+
+    # ── Round 5: 验证集对比（含每只验证股票详情）──────────────
     r5 = rounds.get("round5", {})
     if r5:
         lines.append("## Round 5: 验证集对比")
@@ -240,15 +319,59 @@ def build_summary_markdown(result: dict) -> str:
         new_hr = new_stats.get("hit_rate", 0)
         delta = new_hr - old_hr
         arrow = "📈" if delta > 0 else ("📉" if delta < 0 else "➡️")
-        lines.append(f"- 旧配置: 胜率 {old_hr}% | 校准度 {old_stats.get('calibration', 0)}")
-        lines.append(f"- 新配置: 胜率 {new_hr}% | 校准度 {new_stats.get('calibration', 0)}")
-        lines.append(f"- 变化: {arrow} **{delta:+.1f}%**")
+
+        lines.append(f"| 指标 | 旧配置 | 新配置 | 变化 |")
+        lines.append(f"|------|--------|--------|------|")
+        lines.append(f"| 胜率 | {old_hr}% | {new_hr}% | {arrow} {delta:+.1f}% |")
+        lines.append(f"| 校准度 | {old_stats.get('calibration', 0)} | {new_stats.get('calibration', 0)} | {new_stats.get('calibration', 0) - old_stats.get('calibration', 0):+.1f} |")
         lines.append("")
+
         if r5.get("adopted"):
             lines.append(f"**✅ 采纳判定**: 全部门槛达标，新配置已提升到生产")
         else:
             lines.append(f"**⚠️ 回退判定**: {r5.get('reason', '?')}")
         lines.append("")
+
+        # 每只验证股票的新旧配置对比
+        old_results = r5.get("old_results", [])
+        new_results = r5.get("new_results", [])
+        if old_results or new_results:
+            lines.append("### 🔬 验证集逐只对比")
+            lines.append("")
+            lines.append("> 同一股票在新旧配置下的判断对比，用于排查哪些场景被新配置改善/恶化")
+            lines.append("")
+
+            # 按股票合并
+            old_by_code = {r["ts_code"]: r for r in old_results}
+            new_by_code = {r["ts_code"]: r for r in new_results}
+            all_codes = set(old_by_code.keys()) | set(new_by_code.keys())
+
+            for code in all_codes:
+                old_r = old_by_code.get(code, {})
+                new_r = new_by_code.get(code, {})
+                name = old_r.get("stock_name") or new_r.get("stock_name") or code
+                exam_date = old_r.get("exam_date") or new_r.get("exam_date", "?")
+                alpha = old_r.get("excess_return", new_r.get("excess_return", 0))
+
+                old_verd = old_r.get("verdict", "?")
+                new_verd = new_r.get("verdict", "?")
+                change = ""
+                if old_verd != new_verd:
+                    if new_verd == "hit" and old_verd == "miss":
+                        change = "🎯 改善"
+                    elif new_verd == "miss" and old_verd == "hit":
+                        change = "⚠️ 恶化"
+                else:
+                    change = "➡️ 无变化"
+
+                lines.append(f"#### {name} ({code}) @ {exam_date} | 实际α: {alpha:+.1f}%")
+                lines.append("")
+                lines.append(f"| 配置 | 综合评分 | 方向 | 判定 |")
+                lines.append(f"|------|----------|------|------|")
+                lines.append(f"| 旧 | {old_r.get('weighted', '?')} | {old_r.get('direction_cn', '?')} | {'✅' if old_verd == 'hit' else '❌'} |")
+                lines.append(f"| 新 | {new_r.get('weighted', '?')} | {new_r.get('direction_cn', '?')} | {'✅' if new_verd == 'hit' else '❌'} |")
+                lines.append(f"| 状态 | | | {change} |")
+                lines.append("")
 
     # ── 一句话结论 ──────────────────────────────────────────
     lines.append("---")

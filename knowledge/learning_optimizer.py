@@ -109,31 +109,77 @@ def apply_proposal(tree: dict, proposal: dict) -> tuple[dict, list[str]]:
     return new_tree, errors
 
 
+def _snapshot_value(tree: dict, proposal: dict) -> str:
+    """提取与 proposal 相关的当前配置片段，用于 before/after diff。"""
+    ptype = proposal.get("type")
+    target = proposal.get("target", "")
+    if ptype == "weight":
+        return json.dumps(tree.get("weights", {}), ensure_ascii=False)
+    elif ptype == "rule":
+        rules = tree.get("correction_rules", {})
+        # 找相关的规则
+        relevant = {k: v for k, v in rules.items() if any(kw in k.lower() for kw in target.lower().split())}
+        return json.dumps(relevant if relevant else rules, ensure_ascii=False)[:300]
+    elif ptype == "tree":
+        return f"决策树(当前维度数: {len(tree.get('trees', {}))})"
+    return str(target)[:200]
+
+
 def apply_all_proposals(proposals: list[dict], progress_cb=None) -> dict:
     """Round 4: 将所有采纳的 proposals 应用到 staging 区。
 
-    返回: {staging_tree, prompt_proposals, errors, applied_count}
+    返回: {staging_tree, prompt_proposals, errors, applied_count, diff}
     """
     ensure_staging()
-    tree = load_production_tree()
+    import copy
+    original_tree = load_production_tree()
+    tree = copy.deepcopy(original_tree)
     prompt_proposals = []
     all_errors = []
     applied = 0
+    diff_entries = []
 
     for p in proposals:
         if p.get("type") == "prompt":
             prompt_proposals.append(p)
             applied += 1
+            diff_entries.append({
+                "proposal_id": p.get("id"),
+                "type": "prompt",
+                "target": p.get("target"),
+                "status": "pending_human_approval",
+                "before": "（原 prompt，待审批后才替换）",
+                "after": str(p.get("proposed_value", ""))[:300],
+            })
             continue
 
+        before_snap = _snapshot_value(tree, p)
         new_tree, errors = apply_proposal(tree, p)
         if errors:
             all_errors.append({"proposal_id": p.get("id"), "errors": errors})
             if progress_cb:
                 progress_cb(f"⚠️ {p.get('id')} 安全边界违规: {errors}")
+            diff_entries.append({
+                "proposal_id": p.get("id"),
+                "type": p.get("type"),
+                "target": p.get("target"),
+                "status": "rejected_safety",
+                "before": before_snap,
+                "after": f"建议值: {p.get('proposed_value')}",
+                "errors": errors,
+            })
         else:
             tree = new_tree
             applied += 1
+            after_snap = _snapshot_value(tree, p)
+            diff_entries.append({
+                "proposal_id": p.get("id"),
+                "type": p.get("type"),
+                "target": p.get("target"),
+                "status": "applied",
+                "before": before_snap,
+                "after": after_snap,
+            })
 
     # 保存到 staging
     save_staging_tree(tree)
@@ -161,9 +207,11 @@ def apply_all_proposals(proposals: list[dict], progress_cb=None) -> dict:
 
     return {
         "staging_tree": tree,
+        "original_tree": original_tree,
         "prompt_proposals": prompt_proposals,
         "errors": all_errors,
         "applied_count": applied,
+        "diff": diff_entries,
     }
 
 
@@ -336,4 +384,7 @@ def run_validation(
         "reason": criteria["reason"],
         "old_stats": old_stats,
         "new_stats": new_stats,
+        "old_results": results_old_projected,  # 每只验证股票的详情（旧配置）
+        "new_results": results_new,            # 每只验证股票的详情（新配置）
+        "criteria_details": criteria.get("details", {}),
     }

@@ -275,15 +275,28 @@ def run_cross_review(
     train_results: list,
     stats: dict,
     progress_cb=None,
-) -> list[dict]:
+) -> dict:
     """Round 3: 质疑→答辩→仲裁。
 
-    返回: 最终采纳的 proposals 列表（只含 adopt 的）。
+    返回: {
+        adopted: 最终采纳的 proposals 列表,
+        verdicts: 质疑者对每条建议的评判,
+        defenses: 答辩记录（如有）,
+        arbitrations: 仲裁决定（如有）,
+        fast_path: bool  # 是否走快速路径（Step 1 全通过）
+    }
     """
+    audit = {
+        "adopted": [],
+        "verdicts": [],
+        "defenses": [],
+        "arbitrations": [],
+        "fast_path": False,
+    }
     if not proposals:
         if progress_cb:
             progress_cb("Round 3: 无建议需要审视")
-        return []
+        return audit
 
     # Step 1: 质疑者
     if progress_cb:
@@ -299,24 +312,26 @@ def run_cross_review(
     )
     challenge_text = _call_opus(challenge_prompt, CHALLENGE_SYSTEM)
     verdicts = _parse_verdicts(challenge_text)
+    audit["verdicts"] = verdicts
 
-    # 快速路径: 全部通过
     concerns = [v for v in verdicts if v.get("verdict") == "concern"]
     rejects = [v for v in verdicts if v.get("verdict") == "reject"]
 
     if not concerns and not rejects:
         if progress_cb:
             progress_cb("Round 3: 质疑者全部通过，跳过答辩")
-        return proposals
+        audit["adopted"] = proposals
+        audit["fast_path"] = True
+        return audit
 
-    # 标记被否决的
     rejected_ids = {v["proposal_id"] for v in rejects}
     surviving = [p for p in proposals if p.get("id") not in rejected_ids]
 
     if not concerns:
         if progress_cb:
             progress_cb(f"Round 3: {len(rejects)} 条否决，{len(surviving)} 条通过")
-        return surviving
+        audit["adopted"] = surviving
+        return audit
 
     # Step 2: 答辩
     if progress_cb:
@@ -328,12 +343,11 @@ def run_cross_review(
     )
     defense_text = _call_opus(defense_prompt, DEFENSE_SYSTEM)
     defenses = _parse_defense(defense_text)
+    audit["defenses"] = defenses
 
-    # 处理答辩结果
     withdrawn_ids = {d["proposal_id"] for d in defenses if d.get("action") == "withdraw"}
     revised = {d["proposal_id"]: d for d in defenses if d.get("action") == "revise"}
 
-    # 更新 proposals
     final_proposals = []
     still_disputed = []
     for p in surviving:
@@ -342,10 +356,8 @@ def run_cross_review(
             continue
         if pid in revised:
             p = {**p, "proposed_value": revised[pid].get("revised_value", p.get("proposed_value"))}
-            # 如果修改了，不再争议
             final_proposals.append(p)
         elif any(c["proposal_id"] == pid for c in concerns):
-            # 维持了但仍有疑虑 → 交仲裁
             still_disputed.append(p)
         else:
             final_proposals.append(p)
@@ -353,7 +365,8 @@ def run_cross_review(
     if not still_disputed:
         if progress_cb:
             progress_cb(f"Round 3: 答辩完成，{len(final_proposals)} 条通过")
-        return final_proposals
+        audit["adopted"] = final_proposals
+        return audit
 
     # Step 3: 仲裁
     if progress_cb:
@@ -374,6 +387,7 @@ def run_cross_review(
 
     arbitrate_text = _call_opus(arbitrate_prompt, ARBITRATE_SYSTEM)
     finals = _parse_final(arbitrate_text)
+    audit["arbitrations"] = finals
 
     adopted_ids = {f["proposal_id"] for f in finals if f.get("decision") == "adopt"}
     for p in still_disputed:
@@ -383,4 +397,5 @@ def run_cross_review(
     if progress_cb:
         progress_cb(f"Round 3 完成: {len(final_proposals)} 条最终采纳")
 
-    return final_proposals
+    audit["adopted"] = final_proposals
+    return audit

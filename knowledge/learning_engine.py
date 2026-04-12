@@ -106,11 +106,16 @@ def run_learning_cycle(
 
     from knowledge.learning_reflector import run_cross_review
 
-    adopted_proposals = run_cross_review(proposals, train_results, r1["stats"], progress_cb)
+    audit = run_cross_review(proposals, train_results, r1["stats"], progress_cb)
+    adopted_proposals = audit["adopted"]
     result["rounds"]["round3"] = {
         "original_count": len(proposals),
         "adopted_count": len(adopted_proposals),
         "adopted_proposals": adopted_proposals,
+        "verdicts": audit.get("verdicts", []),
+        "defenses": audit.get("defenses", []),
+        "arbitrations": audit.get("arbitrations", []),
+        "fast_path": audit.get("fast_path", False),
     }
 
     if not adopted_proposals:
@@ -134,6 +139,8 @@ def run_learning_cycle(
         "applied_count": r4["applied_count"],
         "errors": r4["errors"],
         "has_prompt_changes": len(r4["prompt_proposals"]) > 0,
+        "diff": r4.get("diff", []),
+        "prompt_proposals": r4["prompt_proposals"],
     }
 
     # Prompt 变更需要人工审批
