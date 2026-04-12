@@ -1550,30 +1550,100 @@ def cmd_night_learn(phase: str = "all"):
 
 
 def cmd_learn(args: list[str]):
-    """统一学习引擎: learn <mode> [count] [delay]"""
+    """统一学习引擎（四阶段解耦）:
+      learn backtest [count] [delay]     # Stage 1: 批量回测
+      learn resume <session_id>          # Stage 1 断点续跑
+      learn reflect <session_id>         # Stage 2: Opus 反思+审视
+      learn validate <session_id>        # Stage 3: 验证集对比（不自动采纳）
+      learn adopt <session_id>           # Stage 4: 采纳 staging → 生产
+      learn reject <session_id> [理由]   # Stage 4: 回退
+      learn list                         # 列出所有 sessions
+      learn show <session_id>            # 查看某 session 状态
+      learn approve-prompt               # 审批 prompt 变更
+    """
     if not args:
-        _json_out({"error": "用法: learn <general|dragon|weights|full|approve-prompt> [count] [delay]"})
+        _json_out({"error": "用法见 cmd_learn docstring"})
         return
 
-    mode = args[0]
+    cmd = args[0]
+    cb = lambda msg: print(f"  {msg}")
 
-    if mode == "approve-prompt":
+    if cmd == "approve-prompt":
         from knowledge.learning_engine import approve_prompt_patches
-        result = approve_prompt_patches(progress_cb=lambda msg: print(f"  {msg}"))
-        _json_out(result)
+        _json_out(approve_prompt_patches(progress_cb=cb))
         return
 
-    count = int(args[1]) if len(args) > 1 else 50
-    delay = int(args[2]) if len(args) > 2 else 30
+    if cmd == "list":
+        from knowledge.learning_session import list_sessions
+        sessions = list_sessions(limit=20)
+        brief = [{
+            "session_id": s["session_id"],
+            "mode": s.get("mode"),
+            "count": s.get("count"),
+            "stages": s.get("stages"),
+            "updated_at": s.get("updated_at"),
+        } for s in sessions]
+        _json_out({"sessions": brief})
+        return
 
-    from knowledge.learning_engine import run_learning_cycle
-    result = run_learning_cycle(
-        mode=mode,
-        count=count,
-        delay_between=delay,
-        progress_cb=lambda msg: print(f"  {msg}"),
-    )
-    _json_out(result)
+    if cmd == "show":
+        if len(args) < 2:
+            _json_out({"error": "用法: learn show <session_id>"})
+            return
+        from knowledge.learning_session import load_state
+        state = load_state(args[1])
+        _json_out(state or {"error": f"Session {args[1]} 不存在"})
+        return
+
+    if cmd == "backtest":
+        count = int(args[1]) if len(args) > 1 else 50
+        delay = int(args[2]) if len(args) > 2 else 30
+        from knowledge.learning_engine import run_stage1_backtest
+        _json_out(run_stage1_backtest(mode="general", count=count, delay_between=delay, progress_cb=cb))
+        return
+
+    if cmd == "resume":
+        if len(args) < 2:
+            _json_out({"error": "用法: learn resume <session_id>"})
+            return
+        from knowledge.learning_engine import run_stage1_backtest
+        _json_out(run_stage1_backtest(session_id=args[1], progress_cb=cb))
+        return
+
+    if cmd == "reflect":
+        if len(args) < 2:
+            _json_out({"error": "用法: learn reflect <session_id>"})
+            return
+        from knowledge.learning_engine import run_stage2_reflect
+        _json_out(run_stage2_reflect(session_id=args[1], progress_cb=cb))
+        return
+
+    if cmd == "validate":
+        if len(args) < 2:
+            _json_out({"error": "用法: learn validate <session_id>"})
+            return
+        from knowledge.learning_engine import run_stage3_validate
+        _json_out(run_stage3_validate(session_id=args[1], progress_cb=cb))
+        return
+
+    if cmd == "adopt":
+        if len(args) < 2:
+            _json_out({"error": "用法: learn adopt <session_id>"})
+            return
+        from knowledge.learning_engine import run_stage4_adopt
+        _json_out(run_stage4_adopt(session_id=args[1], progress_cb=cb))
+        return
+
+    if cmd == "reject":
+        if len(args) < 2:
+            _json_out({"error": "用法: learn reject <session_id> [理由]"})
+            return
+        reason = " ".join(args[2:]) if len(args) > 2 else ""
+        from knowledge.learning_engine import run_stage4_reject
+        _json_out(run_stage4_reject(session_id=args[1], reason=reason, progress_cb=cb))
+        return
+
+    _json_out({"error": f"未知命令: {cmd}，见 cmd_learn docstring"})
 
 
 # ── 新闻监控 ─────────────────────────────────────────────────────

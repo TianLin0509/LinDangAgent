@@ -309,40 +309,8 @@ def run_single_backtest(exam: dict, progress_cb=None) -> dict | None:
 
 # ── 批量回测 ──────────────────────────────────────────────────────
 
-def run_backtest_round(
-    count: int = 50,
-    delay_between: int = 30,
-    progress_cb=None,
-) -> dict:
-    """Round 1: 批量回测 + holdout 分割。
-
-    返回: {
-        status, train_results, holdout_exams,
-        stats: {total, hits, hit_rate, by_direction, by_sector, by_category}
-    }
-    """
-    exams = select_exam_stocks(count)
-    if not exams:
-        return {"status": "no_exams", "message": "选题失败，请检查数据源"}
-
-    train_exams, holdout_exams = split_holdout(exams, HOLDOUT_RATIO)
-
-    if progress_cb:
-        progress_cb(f"Round 1: {len(train_exams)} 只训练 + {len(holdout_exams)} 只验证")
-
-    results = []
-    for i, exam in enumerate(train_exams):
-        if progress_cb:
-            progress_cb(f"[{i+1}/{len(train_exams)}] {exam['stock_name']}")
-
-        result = run_single_backtest(exam, progress_cb)
-        if result:
-            results.append(result)
-
-        if i < len(train_exams) - 1 and delay_between > 0:
-            time.sleep(delay_between)
-
-    # 统计
+def compute_stats(results: list[dict]) -> dict:
+    """从回测结果列表计算汇总统计（分方向/板块/类别）。"""
     total = len(results)
     hits = sum(1 for r in results if r["verdict"] == "hit")
     hit_rate = hits / total * 100 if total > 0 else 0
@@ -378,15 +346,104 @@ def run_backtest_round(
         v["hit_rate"] = round(v["hits"] / v["total"] * 100, 1) if v["total"] > 0 else 0
 
     return {
+        "total": total, "hits": hits, "hit_rate": round(hit_rate, 1),
+        "by_direction": by_direction, "by_sector": by_sector, "by_category": by_category,
+    }
+
+
+def run_backtest_stage(
+    session_id: str,
+    count: int = 50,
+    delay_between: int = 30,
+    progress_cb=None,
+) -> dict:
+    """Stage 1: 批量回测（支持断点续跑）。
+
+    - 首次调用: 选题 → 存入 session，逐只回测（结果追加到 results.jsonl）
+    - 断点续跑: 从 session 加载 exams + 已完成 results，跳过已完成的继续
+
+    返回: {status, train_results, holdout_exams, stats}
+    """
+    from knowledge.learning_session import (
+        load_exams, save_exams, append_result, load_completed_results,
+        completed_codes, save_backtest_stats, update_stage,
+        STATE_IN_PROGRESS, STATE_DONE,
+    )
+
+    update_stage(session_id, "backtest", STATE_IN_PROGRESS)
+
+    # 加载已有 exams 或新选题
+    train_exams, holdout_exams = load_exams(session_id)
+    if not train_exams:
+        if progress_cb:
+            progress_cb("Stage 1: 选题中...")
+        exams = select_exam_stocks(count)
+        if not exams:
+            return {"status": "no_exams", "message": "选题失败，请检查数据源"}
+        train_exams, holdout_exams = split_holdout(exams, HOLDOUT_RATIO)
+        save_exams(session_id, train_exams, holdout_exams)
+        if progress_cb:
+            progress_cb(f"Stage 1: 新建选题 {len(train_exams)} 只训练 + {len(holdout_exams)} 只验证")
+    else:
+        if progress_cb:
+            progress_cb(f"Stage 1: 恢复 session，训练 {len(train_exams)} / 验证 {len(holdout_exams)}")
+
+    # 找出还未完成的
+    done_codes = completed_codes(session_id)
+    pending = [e for e in train_exams if e["ts_code"] not in done_codes]
+
+    if progress_cb and done_codes:
+        progress_cb(f"已完成 {len(done_codes)} 只，待跑 {len(pending)} 只")
+
+    # 继续跑剩下的
+    for i, exam in enumerate(pending):
+        if progress_cb:
+            progress_cb(f"[{i+1}/{len(pending)}] {exam['stock_name']} ({exam.get('exam_date', '?')})")
+
+        result = run_single_backtest(exam, progress_cb)
+        if result:
+            append_result(session_id, result)
+
+        if i < len(pending) - 1 and delay_between > 0:
+            time.sleep(delay_between)
+
+    # 汇总所有结果
+    results = load_completed_results(session_id)
+    stats = compute_stats(results)
+    save_backtest_stats(session_id, stats)
+    update_stage(session_id, "backtest", STATE_DONE)
+
+    return {
         "status": "ok",
         "train_results": results,
         "holdout_exams": holdout_exams,
-        "stats": {
-            "total": total,
-            "hits": hits,
-            "hit_rate": round(hit_rate, 1),
-            "by_direction": by_direction,
-            "by_sector": by_sector,
-            "by_category": by_category,
-        },
+        "stats": stats,
+    }
+
+
+# 保留旧接口兼容（不持久化，一次性跑完）
+def run_backtest_round(count: int = 50, delay_between: int = 30, progress_cb=None) -> dict:
+    """[兼容] 一次性批量回测，不持久化。新代码请用 run_backtest_stage。"""
+    exams = select_exam_stocks(count)
+    if not exams:
+        return {"status": "no_exams", "message": "选题失败，请检查数据源"}
+
+    train_exams, holdout_exams = split_holdout(exams, HOLDOUT_RATIO)
+
+    if progress_cb:
+        progress_cb(f"Round 1: {len(train_exams)} 只训练 + {len(holdout_exams)} 只验证")
+
+    results = []
+    for i, exam in enumerate(train_exams):
+        if progress_cb:
+            progress_cb(f"[{i+1}/{len(train_exams)}] {exam['stock_name']}")
+        r = run_single_backtest(exam, progress_cb)
+        if r:
+            results.append(r)
+        if i < len(train_exams) - 1 and delay_between > 0:
+            time.sleep(delay_between)
+
+    return {
+        "status": "ok", "train_results": results, "holdout_exams": holdout_exams,
+        "stats": compute_stats(results),
     }
