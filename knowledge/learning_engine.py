@@ -69,7 +69,10 @@ def run_learning_cycle(
             progress_cb(f"Round 1 失败: {result['message']}")
         return result
 
-    result["rounds"]["round1"] = r1["stats"]
+    result["rounds"]["round1"] = {
+        **r1["stats"],
+        "train_results": r1["train_results"],  # 保留案例详情供摘要调试
+    }
     train_results = r1["train_results"]
     holdout_exams = r1["holdout_exams"]
 

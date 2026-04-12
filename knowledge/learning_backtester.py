@@ -301,8 +301,9 @@ def run_single_backtest(exam: dict, progress_cb=None) -> dict | None:
         "stock_alpha": round(stock_alpha, 2),
         "excess_return": round(excess_return, 2),
         "verdict": verdict,
-        "analysis_summary": result.final_summary[:300] if result.final_summary else "",
-        "combined_markdown": result.combined_markdown[:2000] if result.combined_markdown else "",
+        "analysis_summary": result.final_summary[:500] if result.final_summary else "",
+        "combined_markdown": result.combined_markdown[:6000] if result.combined_markdown else "",
+        "round1_scores": (result.general_reports[0].get("scores") if result.general_reports else {}),
     }
 
 

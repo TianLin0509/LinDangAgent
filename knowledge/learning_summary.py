@@ -22,6 +22,89 @@ STATUS_LABEL = {
 }
 
 
+def _format_case_detail(r: dict, idx: int) -> list[str]:
+    """生成单个案例的详情段落（markdown）。"""
+    lines = []
+    verdict = r.get("verdict", "?")
+    icon = "✅" if verdict == "hit" else "❌"
+    stock_name = r.get("stock_name", "?")
+    ts_code = r.get("ts_code", "?")
+    exam_date = r.get("exam_date", "?")
+    weighted = r.get("weighted", "?")
+    direction_cn = r.get("direction_cn", "?")
+    actual = r.get("actual_return_10d", 0)
+    alpha = r.get("excess_return", 0)
+    market_ret = r.get("market_return_10d", 0)
+    sector_name = r.get("sector_name", "")
+    sector_ret = r.get("sector_return_10d", 0)
+    source = r.get("source", "?")
+    category = r.get("category", "?")
+
+    # 标题行：核心判断 vs 实际
+    lines.append(f"### {icon} 案例#{idx} {stock_name} ({ts_code}) @ {exam_date}")
+    lines.append("")
+
+    # 一目了然的对比表
+    lines.append("| 项目 | 值 |")
+    lines.append("|------|------|")
+    lines.append(f"| 选题来源 | {source} ({category}) |")
+    lines.append(f"| AI 综合评分 | **{weighted}** |")
+    lines.append(f"| AI 方向判断 | **{direction_cn}** |")
+    lines.append(f"| 实际 T+10 收益 | {actual:+.2f}% |")
+    lines.append(f"| 大盘同期(上证) | {market_ret:+.2f}% |")
+    lines.append(f"| 板块({sector_name})同期 | {sector_ret:+.2f}% |")
+    lines.append(f"| **个股超额 α** | **{alpha:+.2f}%** |")
+    lines.append(f"| 判定 | {icon} {verdict} |")
+    lines.append("")
+
+    # 四维评分
+    scores = r.get("scores", {})
+    if scores:
+        score_parts = []
+        for dim in ["基本面", "预期差", "资金面", "技术面"]:
+            if dim in scores:
+                score_parts.append(f"{dim} {scores[dim]}")
+        if score_parts:
+            lines.append(f"**四维评分**: {' | '.join(score_parts)} → 综合 {scores.get('综合加权', weighted)}")
+            lines.append("")
+
+    # Round 1 原始评分（如果和最终不同，说明 Round 2 修正了）
+    r1_scores = r.get("round1_scores", {})
+    if r1_scores and r1_scores != scores:
+        r1_parts = []
+        for dim in ["基本面", "预期差", "资金面", "技术面"]:
+            if dim in r1_scores:
+                r1_parts.append(f"{dim} {r1_scores[dim]}")
+        if r1_parts:
+            lines.append(f"**Round 1 原始评分**: {' | '.join(r1_parts)} → Round 2 做了修正")
+            lines.append("")
+
+    # AI 分析摘要
+    summary = r.get("analysis_summary", "")
+    if summary:
+        lines.append("**AI 分析摘要**:")
+        lines.append("")
+        lines.append(f"> {summary[:500]}")
+        lines.append("")
+
+    # 完整分析（可折叠，HTML 里会自动展开）
+    combined = r.get("combined_markdown", "")
+    if combined:
+        lines.append("<details>")
+        lines.append(f"<summary>📄 查看完整分析（{len(combined)} 字符）</summary>")
+        lines.append("")
+        lines.append("```markdown")
+        lines.append(combined[:6000])
+        lines.append("```")
+        lines.append("")
+        lines.append("</details>")
+        lines.append("")
+
+    lines.append("---")
+    lines.append("")
+    return lines
+
+
 def build_summary_markdown(result: dict) -> str:
     """构建完整的学习报告 markdown。"""
     lines = []
@@ -68,6 +151,19 @@ def build_summary_markdown(result: dict) -> str:
                            for s, v in weak]
                 lines.append(f"- 弱项板块 Top3: {' | '.join(w_parts)}")
         lines.append("")
+
+    # ── Round 1 案例详情（调试用）────────────────────────────
+    train_results = r1.get("train_results", []) if r1 else []
+    if train_results:
+        lines.append("## Round 1 案例详情（调试排查）")
+        lines.append("")
+        lines.append("> 💡 用于排查：选股是否合理 / AI 分析方向是否错误 / 数据是否异常 / 代码是否有 bug")
+        lines.append("")
+
+        # 按超额收益排序，最差的在前（最需要排查的）
+        sorted_cases = sorted(train_results, key=lambda r: r.get("excess_return", 0))
+        for idx, r in enumerate(sorted_cases):
+            lines.extend(_format_case_detail(r, idx + 1))
 
     # ── Round 2: Opus 反思建议 ────────────────────────────────
     r2 = rounds.get("round2", {})
@@ -170,6 +266,14 @@ def save_summary_html(result: dict, mode: str, count: int) -> str:
     md_content = build_summary_markdown(result)
     title = f"学习引擎报告 [{result.get('mode', '?')}×{result.get('count', 0)}]"
     html_content = md_to_html(md_content, title=title)
+    # 还原被转义的 <details>/<summary> 标签和代码块（用于折叠案例详情）
+    html_content = (
+        html_content
+        .replace("&lt;details&gt;", "<details>")
+        .replace("&lt;/details&gt;", "</details>")
+        .replace("&lt;summary&gt;", "<summary style='cursor:pointer;color:#0066cc;font-weight:bold;padding:8px 0;'>")
+        .replace("&lt;/summary&gt;", "</summary>")
+    )
     filename = f"{datetime.now().strftime('%Y-%m-%d_%H%M')}_{mode}_{count}_summary.html"
     path = LEARNING_LOG_DIR / filename
     path.write_text(html_content, encoding="utf-8")
