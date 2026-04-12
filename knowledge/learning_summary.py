@@ -162,25 +162,42 @@ def build_summary_markdown(result: dict) -> str:
     return "\n".join(lines)
 
 
-def save_summary_markdown(result: dict, mode: str, count: int) -> str:
-    """保存摘要到 learning_log 目录，返回文件路径。"""
+def save_summary_html(result: dict, mode: str, count: int) -> str:
+    """保存 HTML 摘要到 learning_log 目录，返回文件路径。"""
     from knowledge.learning_config import LEARNING_LOG_DIR, ensure_staging
+    from utils.html_render import md_to_html
     ensure_staging()
-    content = build_summary_markdown(result)
-    filename = f"{datetime.now().strftime('%Y-%m-%d_%H%M')}_{mode}_{count}_summary.md"
+    md_content = build_summary_markdown(result)
+    title = f"学习引擎报告 [{result.get('mode', '?')}×{result.get('count', 0)}]"
+    html_content = md_to_html(md_content, title=title)
+    filename = f"{datetime.now().strftime('%Y-%m-%d_%H%M')}_{mode}_{count}_summary.html"
     path = LEARNING_LOG_DIR / filename
-    path.write_text(content, encoding="utf-8")
+    path.write_text(html_content, encoding="utf-8")
     return str(path)
 
 
-def send_summary_email(result: dict):
-    """发送 markdown 摘要邮件。"""
+def open_in_browser(html_path: str):
+    """在默认浏览器中打开 HTML 文件。"""
+    import webbrowser
+    from pathlib import Path
+    url = Path(html_path).resolve().as_uri()
     try:
-        from utils.email_sender import send_text_email, smtp_configured
+        webbrowser.open(url)
+    except Exception:
+        pass
+
+
+def send_summary_email(result: dict, html_path: str = ""):
+    """发送 HTML 摘要邮件。"""
+    try:
+        from utils.email_sender import send_html_email, smtp_configured
         if not smtp_configured():
             return
-        content = build_summary_markdown(result)
+        from utils.html_render import md_to_html
+        md_content = build_summary_markdown(result)
+        title = f"学习引擎报告 [{result.get('mode', '?')}×{result.get('count', 0)}]"
+        html_content = md_to_html(md_content, title=title)
         subject = f"学习引擎报告 [{result.get('status', '?')}] {result.get('mode', '?')}×{result.get('count', 0)}"
-        send_text_email(subject, content)
+        send_html_email(subject, html_content)
     except Exception:
         pass

@@ -229,31 +229,23 @@ def approve_prompt_patches(progress_cb=None) -> dict:
 
 
 def _send_result_email(result: dict):
-    """发送学习结果摘要邮件 + 保存 markdown。"""
+    """生成 HTML 摘要、弹出浏览器、发送邮件。"""
     try:
         from knowledge.learning_summary import (
-            save_summary_markdown, send_summary_email, build_summary_markdown,
+            save_summary_html, open_in_browser, send_summary_email,
         )
-        import sys
-        # 保存到 learning_log 目录
+        # 保存为 HTML
         mode = result.get("mode", "general")
         count = result.get("count", 0)
-        path = save_summary_markdown(result, mode, count)
-        logger.info("[learn] summary saved to %s", path)
+        html_path = save_summary_html(result, mode, count)
+        logger.info("[learn] summary saved to %s", html_path)
+        print(f"\n📊 学习报告已生成: {html_path}")
 
-        # 终端打印摘要（Windows GBK 环境下强制 UTF-8）
-        try:
-            if hasattr(sys.stdout, "reconfigure"):
-                sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        except Exception:
-            pass
-        print()
-        print("=" * 60)
-        print(build_summary_markdown(result))
-        print("=" * 60)
-        print(f"\n完整摘要已保存到: {path}")
+        # 弹出浏览器
+        open_in_browser(html_path)
+        print("🌐 已在默认浏览器中打开")
 
         # 邮件
-        send_summary_email(result)
+        send_summary_email(result, html_path)
     except Exception as exc:
         logger.warning("[learn] result email failed: %s", exc)
