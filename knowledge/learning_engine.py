@@ -229,32 +229,31 @@ def approve_prompt_patches(progress_cb=None) -> dict:
 
 
 def _send_result_email(result: dict):
-    """发送学习结果邮件。"""
+    """发送学习结果摘要邮件 + 保存 markdown。"""
     try:
-        from utils.email_sender import send_text_email, smtp_configured
-        if not smtp_configured():
-            return
+        from knowledge.learning_summary import (
+            save_summary_markdown, send_summary_email, build_summary_markdown,
+        )
+        import sys
+        # 保存到 learning_log 目录
+        mode = result.get("mode", "general")
+        count = result.get("count", 0)
+        path = save_summary_markdown(result, mode, count)
+        logger.info("[learn] summary saved to %s", path)
 
-        lines = [
-            "统一学习引擎 — 学习报告",
-            "=" * 40,
-            f"\n状态: {result.get('status', '?')}",
-            f"摘要: {result.get('summary', '?')}",
-        ]
+        # 终端打印摘要（Windows GBK 环境下强制 UTF-8）
+        try:
+            if hasattr(sys.stdout, "reconfigure"):
+                sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+        print()
+        print("=" * 60)
+        print(build_summary_markdown(result))
+        print("=" * 60)
+        print(f"\n完整摘要已保存到: {path}")
 
-        r1 = result.get("rounds", {}).get("round1", {})
-        if r1:
-            lines.append(f"\nRound 1: {r1.get('total', 0)} 只, 胜率 {r1.get('hit_rate', 0)}%")
-
-        r3 = result.get("rounds", {}).get("round3", {})
-        if r3:
-            lines.append(f"Round 3: {r3.get('original_count', 0)} 条建议 → {r3.get('adopted_count', 0)} 条采纳")
-
-        r5 = result.get("rounds", {}).get("round5", {})
-        if r5:
-            lines.append(f"Round 5: 旧{r5.get('old_stats', {}).get('hit_rate', 0)}% → 新{r5.get('new_stats', {}).get('hit_rate', 0)}%")
-            lines.append(f"结论: {'采纳' if r5.get('adopted') else '回退'}")
-
-        send_text_email("学习引擎报告", "\n".join(lines))
+        # 邮件
+        send_summary_email(result)
     except Exception as exc:
         logger.warning("[learn] result email failed: %s", exc)
