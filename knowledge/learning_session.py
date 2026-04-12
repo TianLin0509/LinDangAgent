@@ -86,8 +86,33 @@ def create_session(mode: str, count: int, delay_between: int = 30) -> str:
         },
     }
     _save_state(sid, state)
+    set_current_session(sid)
     logger.info("[learn] created session %s (mode=%s, count=%d)", sid, mode, count)
     return sid
+
+
+def current_session_file() -> Path:
+    return _sessions_root() / ".current"
+
+
+def set_current_session(session_id: str):
+    """设置当前活跃 session（用于自然语言触发时自动定位）。"""
+    current_session_file().write_text(session_id, encoding="utf-8")
+
+
+def get_current_session() -> str:
+    """获取当前活跃 session ID，无则返回空字符串。"""
+    path = current_session_file()
+    if not path.exists():
+        return ""
+    return path.read_text(encoding="utf-8").strip()
+
+
+def clear_current_session():
+    """清除当前活跃 session 标记（通常在 Stage 4 完成后）。"""
+    path = current_session_file()
+    if path.exists():
+        path.unlink()
 
 
 def load_state(session_id: str) -> dict | None:

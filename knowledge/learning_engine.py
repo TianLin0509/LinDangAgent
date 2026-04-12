@@ -21,6 +21,7 @@ from knowledge.learning_session import (
     save_validation, load_validation, save_diff, load_diff,
     append_validation_result, load_validation_results, validation_completed_codes,
     save_decision, load_decision, update_stage,
+    clear_current_session,
     STATE_IN_PROGRESS, STATE_DONE, STATE_ADOPTED, STATE_REJECTED,
 )
 
@@ -343,6 +344,7 @@ def run_stage4_adopt(session_id: str, progress_cb=None) -> dict:
 
     save_decision(session_id, "adopted", "用户手动采纳")
     update_stage(session_id, "final", STATE_ADOPTED)
+    clear_current_session()
 
     return {
         "session_id": session_id,
@@ -360,6 +362,7 @@ def run_stage4_reject(session_id: str, reason: str = "", progress_cb=None) -> di
     clear_staging()
     save_decision(session_id, "rejected", reason or "用户手动回退")
     update_stage(session_id, "final", STATE_REJECTED)
+    clear_current_session()
 
     if progress_cb:
         progress_cb(f"❌ 已回退，staging 已清除")
