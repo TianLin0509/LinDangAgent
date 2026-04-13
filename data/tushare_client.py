@@ -154,12 +154,25 @@ def _retry_call(fn, retries=3, delay=1):
 # 三层兜底调度器
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _try_with_fallback(tushare_fn, akshare_fn=None, eastmoney_fn=None, baostock_fn=None, sina_fn=None, label="数据"):
-    """依次尝试 Tushare → 东方财富 → AKShare → Baostock，返回第一个成功的结果
+def _try_with_fallback(tushare_fn, akshare_fn=None, eastmoney_fn=None, baostock_fn=None, sina_fn=None, label="数据", qmt_fn=None):
+    """依次尝试 QMT → Tushare → 东方财富 → AKShare → Baostock → Sina，返回第一个成功的结果
 
+    优先级：QMT（券商直连）> Tushare（数据最全）> 东方财富（最快最稳）> AKShare > Baostock > Sina
     优先级依据实测：东方财富最快最稳(0.23s)，AKShare批量不稳，Baostock稳但慢(1.75s)
     """
     global _data_source
+
+    # 第零层：QMT（券商直连，最高优先级；未登录/失败静默降级）
+    if qmt_fn is not None:
+        try:
+            result, err = qmt_fn()
+            if err is None:
+                with _init_lock:
+                    _data_source = "qmt"
+                return result, None
+        except Exception as e:
+            # QMTUnavailable 以及所有异常一律静默降级（预期：QMT 可能没登录）
+            logger.debug("[%s] qmt 失败（降级）: %s", label, e)
 
     # 第一层：Tushare（数据最全）
     if _get_pro() is not None:
