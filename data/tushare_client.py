@@ -398,6 +398,27 @@ def get_basic_info(ts_code: str) -> tuple[dict, str | None]:
 @compat_cache(ttl=300, show_spinner=False)
 def get_price_df(ts_code: str, days: int = 140) -> tuple[pd.DataFrame, str | None]:
     from data.fallback import ak_get_price_df, em_get_price_df, bs_get_price_df
+    from data import qmt_client
+    from data.qmt_client import QMTUnavailable
+
+    def _qmt():
+        # QMT 未登录 → is_alive 返回 False → raise 触发降级
+        if not qmt_client.is_alive():
+            raise QMTUnavailable("qmt not alive")
+        df = qmt_client.get_kline(ts_code, period="1d", count=days, adjust="front")
+        if df is None or df.empty:
+            return pd.DataFrame(), "QMT 无 K 线"
+        # 英文列 → 项目标准中文列 schema
+        out = df.reset_index().rename(columns={
+            "index": "日期",
+            "open": "开盘", "high": "最高", "low": "最低", "close": "收盘",
+            "volume": "成交量", "amount": "成交额",
+        })
+        if "日期" not in out.columns and "time" in out.columns:
+            out = out.rename(columns={"time": "日期"})
+        if "涨跌幅" not in out.columns:
+            out["涨跌幅"] = out["收盘"].pct_change() * 100
+        return out, None
 
     def _tushare():
         if _get_pro() is None:
@@ -422,6 +443,7 @@ def get_price_df(ts_code: str, days: int = 140) -> tuple[pd.DataFrame, str | Non
         lambda: em_get_price_df(ts_code, days),
         baostock_fn=lambda: bs_get_price_df(ts_code, days),
         label="K线",
+        qmt_fn=_qmt,
     )
 
 
