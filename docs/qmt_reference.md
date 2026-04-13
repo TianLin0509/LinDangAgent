@@ -243,14 +243,64 @@ See `docs/qmt_stress_report_20260414_000106.md` for complete details.
 
 ---
 
-## Financial Data — NOT AVAILABLE on 国金 QMT (2026-04-14 verified)
+## Financial Data — ✅ AVAILABLE (2026-04-14 verified, correcting earlier wrong conclusion)
 
-`download_financial_data([sym], table_list=['Balance'])` **hangs indefinitely (>60s, no exception)** on 国金证券 QMT 账号。Direct `get_financial_data` without download returns all 8 tables with rows=0 but no error.
+**之前的结论"国金无财务权限"是错的**，错因：
+1. 用了 **3 个不存在的表名**（`CapitalStructure` / `TopTenHolder` / `TopTenHolderFree`）
+2. 用了同步版 `download_financial_data` + 全历史（默认参数）
 
-**Conclusion:** 国金 QMT 账号没有订阅财务数据权限。
+### 正确表名（来自 xtquant 源码 docstring）
+```
+['Balance', 'Income', 'CashFlow', 'Capital',
+ 'Top10FlowHolder', 'Top10Holder', 'HolderNum', 'PershareIndex']
+```
 
-**决策:** 财务数据必须继续走 Tushare/AKShare/东财，**不要尝试 QMT 做财务兜底或多源交叉**。`data/tushare_client.py::get_financial` 保持原状，不接 `qmt_fn`。
+### 正确调用方式（async + 窄时间窗口）
+```python
+from xtquant import xtdata
 
-8 张试过的表：Balance / Income / CashFlow / PershareIndex / CapitalStructure / HolderNum / TopTenHolder / TopTenHolderFree — 全部 hang。
+TABLES = ['Balance','Income','CashFlow','Capital',
+          'Top10FlowHolder','Top10Holder','HolderNum','PershareIndex']
 
-**How to handle future attempts:** 代码里想调 `xtdata.download_financial_data` 要加 60s timeout 保护（threading.Timer 或 concurrent.futures），否则会把进程卡死。
+# 1. 先下载（async，几十 ms 搞定，有 progress callback）
+xtdata.download_financial_data2(
+    [sym], table_list=TABLES,
+    start_time='20240101', end_time='20260414',  # 窄窗口至关重要
+    callback=lambda d: None,  # {'total':N, 'finished':n}
+)
+
+# 2. 再查询（返回 dict[sym][table] = DataFrame）
+raw = xtdata.get_financial_data(
+    [sym], table_list=TABLES,
+    start_time='20240101', end_time='20260414',
+    report_type='report_time',  # 或 'announce_time'
+)
+df = raw[sym]['Balance']  # DataFrame
+```
+
+### 实测 schema (000001.SZ, 2024-01-01 ~ 2026-04-14)
+| 表 | shape | 关键字段样例 |
+|---|---|---|
+| Balance | (8, 160) | m_timetag, tot_assets, tot_liab, cap_stk, undistributed_profit... |
+| Income | (8, 84) | revenue_inc, total_operating_cost, ... |
+| CashFlow | (8, 116) | cash_received_ori_ins_contract_pre, ... |
+| Capital | (6, 7) | total_capital, circulating_capital, freeFloatCapital |
+| Top10FlowHolder | (80, 9) | declareDate, endDate, quantity, ratio, rank, name（8期×10人） |
+| Top10Holder | (80, 9) | 同上，十大股东 |
+| HolderNum | (11, 8) | shareholder（总数）, shareholderA/B/H |
+| PershareIndex | (8, 43) | **s_fa_eps_basic, s_fa_eps_diluted, s_fa_bps, s_fa_ocfps** 等核心每股指标 |
+
+**`m_timetag` = 报告期（YYYYMMDD）, `m_anntime` = 公告日期**
+
+### 坑
+- ❌ **同步版 `download_financial_data` + 默认全历史**：组合起来在本机实测 hang >60s。务必用 `download_financial_data2` (async + callback) 版本
+- ❌ **表名容易写错**：`CapitalStructure` ❌ 应是 `Capital`；`TopTenHolder` ❌ 应是 `Top10Holder`
+- `get_financial_data` 无下载时返回 8 张空 DataFrame（`shape=(0,0)`），**不报错**——静默 bug 源头
+- 字段名大量是 WindData 遗产字段，很多对平安银行这种银行股不适用（NaN）；用时要 per-行业过滤
+- `PershareIndex` 的 `s_fa_*` 前缀 = 深度信息，AI 分析最常用
+
+### 决策更新
+**可以把 QMT 财务作为 Tushare 的第二数据源**：
+- **兜底**：Tushare 挂了时保底可用
+- **交叉验证**：AI 分析时对比两源，差异 >10% flag 供人工核查（抓到财报重述/数据源 bug）
+- `data/tushare_client.py::get_financial` 可以接 `qmt_fn`——具体实现见阶段 B 规划
