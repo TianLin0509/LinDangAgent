@@ -217,3 +217,25 @@ Index: []}
 ```
 Level2 非本期目标
 ```
+
+
+---
+
+## Stress Findings (2026-04-14)
+
+### Findings requiring attention
+- 概念板块 `锂电池` 在 QMT 板块列表中完全缺失
+- 概念板块 `CPO` 在 QMT 板块列表中完全缺失
+- 概念板块 `人工智能` 在 QMT 板块列表中完全缺失
+- 概念板块 `光伏` 在 QMT 板块列表中完全缺失
+- 概念板块 `新能源车` 在 QMT 板块列表中完全缺失
+- 概念板块 `消费电子` 在 QMT 板块列表中完全缺失
+- 概念板块 `半导体` 在 QMT 板块列表中完全缺失
+- 概念板块 `白酒` 在 QMT 板块列表中完全缺失
+- 概念板块 `医疗器械` 在 QMT 板块列表中完全缺失
+- 概念板块 `军工` 在 QMT 板块列表中完全缺失
+- 概念板块 `房地产` 在 QMT 板块列表中完全缺失
+- 概念板块 `银行` 在 QMT 板块列表中完全缺失
+
+### Full stress report
+See `docs/qmt_stress_report_20260414_000106.md` for complete details.
