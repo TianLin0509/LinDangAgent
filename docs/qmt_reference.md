@@ -239,3 +239,18 @@ Level2 非本期目标
 
 ### Full stress report
 See `docs/qmt_stress_report_20260414_000106.md` for complete details.
+
+
+---
+
+## Financial Data — NOT AVAILABLE on 国金 QMT (2026-04-14 verified)
+
+`download_financial_data([sym], table_list=['Balance'])` **hangs indefinitely (>60s, no exception)** on 国金证券 QMT 账号。Direct `get_financial_data` without download returns all 8 tables with rows=0 but no error.
+
+**Conclusion:** 国金 QMT 账号没有订阅财务数据权限。
+
+**决策:** 财务数据必须继续走 Tushare/AKShare/东财，**不要尝试 QMT 做财务兜底或多源交叉**。`data/tushare_client.py::get_financial` 保持原状，不接 `qmt_fn`。
+
+8 张试过的表：Balance / Income / CashFlow / PershareIndex / CapitalStructure / HolderNum / TopTenHolder / TopTenHolderFree — 全部 hang。
+
+**How to handle future attempts:** 代码里想调 `xtdata.download_financial_data` 要加 60s timeout 保护（threading.Timer 或 concurrent.futures），否则会把进程卡死。
