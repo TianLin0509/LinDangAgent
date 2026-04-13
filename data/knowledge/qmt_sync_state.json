@@ -1,0 +1,18 @@
+{
+  "last_success_date": "2026-04-14",
+  "last_run_time": "2026-04-14T01:50:05",
+  "last_stats": {
+    "stocks_synced": 7327,
+    "verified_sample_ok": 10,
+    "verified_sample_fail": 0,
+    "download_cost_ms": 240642,
+    "gap_days_recovered": null
+  },
+  "history": [
+    {
+      "date": "2026-04-14",
+      "ok": true,
+      "cost_s": 240.6
+    }
+  ]
+}
