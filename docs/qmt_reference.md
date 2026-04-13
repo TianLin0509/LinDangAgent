@@ -221,6 +221,58 @@ Level2 非本期目标
 
 ---
 
+## Deep Audit Corrections (2026-04-14)
+
+基于 `inspect` 穷举 xtdata 全部 90+ 函数 + 实测修正 Task 4/8 误判。
+
+### 国金 MiniQMT 版本能力边界
+
+**✅ 可用（实测通过）**
+1. K 线（日/分钟/周/月，`download_history_data2` + `get_market_data_ex`）
+2. **前复权/后复权**（dividend_type='front'/'back'/'none' 全正确；前错判原因是测试窗口 count=5 太短跨不到除权日）
+3. 实时快照 `get_full_tick`、订阅 `subscribe_quote`（盘中/后行为不同）
+4. **元信息 `get_instrument_detail(sym, iscomplete=True)`**：83 字段（之前没传 iscomplete=True 只拿到 31 字段，坑）
+5. **批量元信息 `get_instrument_detail_list`**：100 只 100ms（1ms/只），是单只循环快 50+ 倍
+6. 除权因子 `get_divid_factors`：8 列 (time/interest/stockBonus/stockGift/allotNum/allotPrice/gugai/dr)，`dr` 是累积因子
+7. 交易日历 `get_trading_dates('SH', ...)`
+8. **财务 8 张表**（`download_financial_data2` + 正确表名 + 窄时间窗口，详见上节）
+9. 板块列表 `get_sector_list()`：36 个**交易所结构板**（沪深A股/科创板/创业板/沪深ETF/沪深指数），**无概念板**
+10. 板块成分 `get_stock_list_in_sector`
+
+**❌ 不可用（客户端返 "升级投研版" 错误）**
+- `download_his_st_data` —— 历史 ST 数据
+- `get_full_kline` —— 最新 K 线全推
+- `compute_coming_trading_calendar` —— 未来交易日
+- `get_transactioncount` —— 大单统计
+- `get_metatable_list` —— 元数据表
+- `bnd_get_conversion_price` / `bnd_get_call_info` / `bnd_get_put_info` / `bnd_get_amount_change` —— 可转债详情
+- 北交所 `.BJ` 元信息（`get_instrument_detail` 返 None）——**数据权限问题，不是 bug**
+- 概念板（`get_sector_info` 需 SectorData 目录，`download_sector_data` 实测 hang >3min）
+
+**🟡 盘后空数据 / 未充分测试**
+- `get_l2_quote` / `get_l2_order` / `get_l2_transaction` / Level2 千档盘口 —— 盘后返空，盘中行为未实测
+- `get_broker_queue_data` —— 盘后返空字典
+- `subscribe_whole_quote` —— 未测
+
+### 对 LinDangAgent 单股分析的映射
+
+| 现有维度 | 当前数据源 | 是否可接 QMT | 备注 |
+|---|---|---|---|
+| 日线 K 线 | Tushare/AKShare | ✅ 已接入 Task 3 | |
+| 股票基础信息 | Tushare/东财 | ✅ **应接** `get_instrument_detail_list` | 批量快 + 83 字段 |
+| ST/停牌前置过滤 | AKShare 慢查 | ✅ **应接** `InstrumentStatus` + `UpStop/PreClose` 比 | 压测实测过 |
+| 涨跌幅计算 | 按日期 %7 | ✅ **应接** `get_trading_dates` | 节假日精准 |
+| 前复权校验 | AKShare qfq | ✅ `dividend_type='front'` 可用；`get_divid_factors` 自建校验 |
+| 财务三表 + 每股指标 | Tushare | ✅ **应接兜底 + 交叉验证** 8 张表 | PershareIndex 43 字段丰富 |
+| 概念板成分 | AKShare/东财 | ❌ **保持现状**，QMT 无 | |
+| 行业板（申万/中信） | Tushare | ❌ **保持现状**，QMT 无 | |
+| 资金流向 | 东财 | ❌ **保持现状**，QMT 无 | |
+| 龙虎榜 | AKShare | ❌ **保持现状** | |
+| 股东信息 | Tushare | ✅ **应接** Top10Holder/Top10FlowHolder/HolderNum | |
+| 大单统计 | 东财 | ❌ 需投研版 | |
+
+---
+
 ## Stress Findings (2026-04-14)
 
 ### Findings requiring attention
