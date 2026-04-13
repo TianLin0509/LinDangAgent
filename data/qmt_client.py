@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Optional
+from typing import Optional, Set
 
 import pandas as pd
 
@@ -52,6 +52,7 @@ def _denormalize_symbol(code: str) -> str:
 _init_lock = threading.Lock()
 _connected: Optional[bool] = None
 _xtdata = None
+_downloaded: Set[tuple] = set()
 
 
 def _ensure_connected() -> None:
@@ -82,6 +83,27 @@ def _ensure_connected() -> None:
         except Exception as e:
             _connected = False
             raise QMTUnavailable(f"xtdata 连接失败: {e}")
+
+
+def _ensure_downloaded(sym: str, period: str, start: str, end: str) -> None:
+    """
+    xtquant 要求先 download_history_data 才能 get_market_data_ex；
+    按 (symbol, period) 粒度缓存，确保只下载一次。
+    下载失败不抛异常，交给后续查询暴露真实问题。
+    """
+    key = (sym, period)
+    if key in _downloaded:
+        return
+    try:
+        t0 = time.time()
+        _xtdata.download_history_data(sym, period=period, start_time=start or "", end_time=end or "")
+        logger.info("[qmt] download_history_data %s period=%s cost=%dms", sym, period, int((time.time() - t0) * 1000))
+        _downloaded.add(key)
+    except Exception as e:
+        # 下载失败不阻塞查询——可能数据已有或 API 瞬时抖动
+        logger.warning("[qmt] download_history_data %s failed (continuing): %s", sym, e)
+        # 仍加入缓存，避免每次重试下载；真实查询失败会报错
+        _downloaded.add(key)
 
 
 def is_alive() -> bool:
@@ -118,6 +140,7 @@ def get_kline(
     start_time = start or ""
     end_time = end or ""
     n = count if (not start and not end) else -1
+    _ensure_downloaded(sym, period, start_time, end_time)
 
     t0 = time.time()
     try:
@@ -159,6 +182,9 @@ def get_realtime(symbols: list[str]) -> dict[str, dict]:
     """返回: {"000001": {"price": 12.3, "bid1": ..., "ask1": ..., "ts": ...}, ...}"""
     _ensure_connected()
     syms = [_normalize_symbol(s) for s in symbols]
+    # 实时快照需要最新历史数据铺底
+    for s in syms:
+        _ensure_downloaded(s, "1d", "", "")
     try:
         tick = _xtdata.get_full_tick(syms)
     except Exception as e:

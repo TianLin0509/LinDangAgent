@@ -51,3 +51,37 @@ def test_normalize_symbol_unknown_prefix_warns(caplog):
         result = _normalize_symbol("5ABCDE")
     assert result == "5ABCDE.SZ"
     assert any("unknown symbol prefix" in r.message for r in caplog.records)
+
+
+def test_ensure_downloaded_cached(monkeypatch):
+    """_ensure_downloaded 对同一 (sym, period) 只下载一次"""
+    import data.qmt_client as qc
+    qc._downloaded.clear()
+
+    calls = []
+    class FakeXt:
+        def download_history_data(self, sym, period, start_time, end_time):
+            calls.append((sym, period))
+
+    monkeypatch.setattr(qc, "_xtdata", FakeXt())
+    qc._ensure_downloaded("000001.SZ", "1d", "", "")
+    qc._ensure_downloaded("000001.SZ", "1d", "", "")
+    qc._ensure_downloaded("000001.SZ", "1m", "", "")
+    assert calls == [("000001.SZ", "1d"), ("000001.SZ", "1m")]
+
+
+def test_ensure_downloaded_failure_still_cached(monkeypatch):
+    """下载失败也加入缓存，避免重试"""
+    import data.qmt_client as qc
+    qc._downloaded.clear()
+
+    calls = []
+    class FakeXt:
+        def download_history_data(self, sym, period, start_time, end_time):
+            calls.append(sym)
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(qc, "_xtdata", FakeXt())
+    qc._ensure_downloaded("000001.SZ", "1d", "", "")
+    qc._ensure_downloaded("000001.SZ", "1d", "", "")
+    assert len(calls) == 1, "失败后仍应缓存，不应重试"
