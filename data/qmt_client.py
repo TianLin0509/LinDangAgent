@@ -36,8 +36,10 @@ def _normalize_symbol(code: str) -> str:
         return f"{code}.SH"
     if prefix.startswith(("000", "001", "002", "003", "300", "301", "200")):
         return f"{code}.SZ"
-    if prefix[:1] in ("4", "8", "9"):
+    if prefix[:1] in ("4", "8"):  # 北交所 43/83/87/88 起；9xx 已在 SH 分支处理
         return f"{code}.BJ"
+    # 未知前缀：默认按深交所处理，但记 warning 方便定位异常输入
+    logger.warning("[qmt] unknown symbol prefix for %s, defaulting to .SZ", code)
     return f"{code}.SZ"
 
 
