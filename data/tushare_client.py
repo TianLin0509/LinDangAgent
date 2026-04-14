@@ -480,6 +480,29 @@ def get_price_df(ts_code: str, days: int = 140) -> tuple[pd.DataFrame, str | Non
 @compat_cache(ttl=600, show_spinner=False)
 def get_financial(ts_code: str) -> tuple[str, str | None]:
     from data.fallback import ak_get_financial
+    from data import qmt_client
+    from data.qmt_client import QMTUnavailable
+    from data.qmt_schema_map import qmt_financials_to_tushare_text
+    import pandas as pd
+
+    def _qmt():
+        if not qmt_client.is_alive():
+            raise QMTUnavailable("QMT not alive")
+        try:
+            tables = qmt_client.get_financial(ts_code, years=3)
+        except QMTUnavailable:
+            raise
+        except Exception as e:
+            raise QMTUnavailable(f"qmt_client.get_financial 异常: {e}")
+
+        # 核心表门控：Balance / Income / PershareIndex 任一空 → 整体降级
+        CORE = ("Balance", "Income", "PershareIndex")
+        empty_core = [k for k in CORE if tables.get(k, pd.DataFrame()).empty]
+        if empty_core:
+            raise QMTUnavailable(f"QMT 核心财务表空: {empty_core}")
+
+        text = qmt_financials_to_tushare_text(tables)
+        return text, None
 
     def _tushare():
         if _get_pro() is None:
@@ -521,6 +544,7 @@ def get_financial(ts_code: str) -> tuple[str, str | None]:
         lambda: ak_get_financial(ts_code),
         None,
         label="财务",
+        qmt_fn=_qmt,
     )
 
 

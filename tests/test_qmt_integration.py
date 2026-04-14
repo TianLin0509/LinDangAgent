@@ -125,3 +125,47 @@ def test_get_basic_info_uses_qmt(monkeypatch):
     assert err is None
     assert info.get("name") == "平安银行"
     assert tushare_client._data_source_map.get("基本信息") == "qmt"
+
+
+def test_get_financial_uses_qmt(monkeypatch):
+    """QMT 8 表核心非空 → 走 QMT，结果含中文字段。"""
+    import pandas as pd
+    from data import tushare_client
+    import data.qmt_client as qc
+
+    fake_tables = {
+        "Balance": pd.DataFrame([{"m_timetag": "20250331", "tot_assets": 5.77e12,
+                                   "tot_liab": 5.27e12, "cap_stk": 1.94e10}]),
+        "Income": pd.DataFrame([{"m_timetag": "20250331", "revenue_inc": 3.5e11,
+                                  "n_income_attr_p": 1.4e11}]),
+        "CashFlow": pd.DataFrame(),
+        "Capital": pd.DataFrame(),
+        "Top10FlowHolder": pd.DataFrame(),
+        "Top10Holder": pd.DataFrame(),
+        "HolderNum": pd.DataFrame(),
+        "PershareIndex": pd.DataFrame([{"m_timetag": "20250331", "s_fa_eps_basic": 1.5, "s_fa_bps": 15.2}]),
+    }
+    monkeypatch.setattr(qc, "is_alive", lambda: True)
+    monkeypatch.setattr(qc, "get_financial", lambda sym, years=3: fake_tables)
+
+    tushare_client._data_source_map = {}
+    # Bust cache by using a unique code per test run
+    txt, err = tushare_client.get_financial("QMTTEST1.SZ")
+    assert err is None
+    assert "资产总计" in txt
+    assert tushare_client._data_source_map.get("财务") == "qmt"
+
+
+def test_get_financial_core_empty_falls_back(monkeypatch):
+    """核心财务表空 → QMTUnavailable → 降级 Tushare（或其他非 QMT 源）。"""
+    from data import tushare_client
+    from tests.fixtures.qmt_mocks import patch_qmt_financial_empty_core
+
+    patch_qmt_financial_empty_core(monkeypatch)
+
+    import unittest.mock as um
+    with um.patch.object(tushare_client, "_get_pro", return_value=None):
+        tushare_client._data_source_map = {}
+        txt, err = tushare_client.get_financial("QMTTEST2.SZ")
+        # 降级后不是 qmt
+        assert tushare_client._data_source_map.get("财务") != "qmt"
