@@ -169,3 +169,70 @@ def test_get_financial_core_empty_falls_back(monkeypatch):
         txt, err = tushare_client.get_financial("QMTTEST2.SZ")
         # 降级后不是 qmt
         assert tushare_client._data_source_map.get("财务") != "qmt"
+
+
+def test_get_income_uses_qmt(monkeypatch):
+    import pandas as pd
+    from data import report_data
+    import data.qmt_client as qc
+
+    fake_tables = {
+        "Balance": pd.DataFrame(), "CashFlow": pd.DataFrame(),
+        "Capital": pd.DataFrame(), "Top10FlowHolder": pd.DataFrame(),
+        "Top10Holder": pd.DataFrame(), "HolderNum": pd.DataFrame(),
+        "PershareIndex": pd.DataFrame(),
+        "Income": pd.DataFrame([
+            {"m_timetag": "20250331", "revenue_inc": 3.5e11, "n_income_attr_p": 1.4e11,
+             "basic_eps": 0.6},
+            {"m_timetag": "20241231", "revenue_inc": 1.6e12, "n_income_attr_p": 4.5e11,
+             "basic_eps": 2.3},
+        ]),
+    }
+    monkeypatch.setattr(qc, "is_alive", lambda: True)
+    monkeypatch.setattr(qc, "get_financial", lambda sym, years=3: fake_tables)
+
+    df = report_data.get_income("QMTTEST_INCOME.SZ")
+    assert not df.empty
+    # 必须有中文列或等价字段
+    has_cn = "报告期" in df.columns or "营业总收入" in df.columns
+    has_en = "end_date" in df.columns
+    assert has_cn or has_en
+
+
+def test_get_balancesheet_uses_qmt(monkeypatch):
+    import pandas as pd
+    from data import report_data
+    import data.qmt_client as qc
+
+    fake_tables = {k: pd.DataFrame() for k in ("Income", "CashFlow", "Capital",
+                                                 "Top10FlowHolder", "Top10Holder",
+                                                 "HolderNum", "PershareIndex")}
+    fake_tables["Balance"] = pd.DataFrame([
+        {"m_timetag": "20250331", "tot_assets": 5.77e12, "tot_liab": 5.27e12, "cap_stk": 1.94e10},
+    ])
+    monkeypatch.setattr(qc, "is_alive", lambda: True)
+    monkeypatch.setattr(qc, "get_financial", lambda sym, years=3: fake_tables)
+
+    df = report_data.get_balancesheet("QMTTEST_BS.SZ")
+    assert not df.empty
+
+
+def test_get_fina_indicator_uses_qmt(monkeypatch):
+    import pandas as pd
+    from data import report_data
+    import data.qmt_client as qc
+
+    fake_tables = {k: pd.DataFrame() for k in ("Balance", "Income", "CashFlow",
+                                                 "Capital", "Top10FlowHolder",
+                                                 "Top10Holder", "HolderNum")}
+    fake_tables["PershareIndex"] = pd.DataFrame([
+        {"m_timetag": "20250331", "s_fa_eps_basic": 1.5, "s_fa_bps": 15.2,
+         "s_fa_roe": 12.5},
+    ])
+    monkeypatch.setattr(qc, "is_alive", lambda: True)
+    monkeypatch.setattr(qc, "get_financial", lambda sym, years=3: fake_tables)
+
+    df = report_data.get_fina_indicator("QMTTEST_FINA.SZ")
+    assert not df.empty
+    # 映射后应该包含 Tushare fina_indicator 的字段名
+    assert "basic_eps" in df.columns or "bps" in df.columns or "roe" in df.columns

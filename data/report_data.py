@@ -36,13 +36,26 @@ def _ts_call(fn):
         return _retry_call(fn, retries=3, delay=1)
 
 
-def _ts_or_ak(ts_fn, ak_fn, label: str, bs_fn=None) -> pd.DataFrame:
-    """Tushare 优先 → akshare → baostock，统一返回 DataFrame"""
+def _ts_or_ak(ts_fn, ak_fn, label: str, bs_fn=None, qmt_fn=None) -> pd.DataFrame:
+    """QMT → Tushare → akshare → baostock，统一返回 DataFrame"""
+    from data.tushare_client import _data_source_map
+
+    # QMT 优先
+    if qmt_fn is not None:
+        try:
+            df = qmt_fn()
+            if df is not None and hasattr(df, "empty") and not df.empty:
+                _data_source_map[label] = "qmt"
+                return df
+        except Exception as e:
+            logger.debug("[%s] qmt 失败: %s", label, e)
+
     pro = get_pro()
     if pro is not None:
         try:
             df = ts_fn(pro)
             if df is not None and not df.empty:
+                _data_source_map[label] = "tushare"
                 return df
         except Exception as e:
             logger.debug("[%s] tushare 失败: %s", label, e)
@@ -52,6 +65,7 @@ def _ts_or_ak(ts_fn, ak_fn, label: str, bs_fn=None) -> pd.DataFrame:
         df = ak_fn()
         if df is not None and not df.empty:
             logger.info("[%s] akshare 兜底成功", label)
+            _data_source_map[label] = "akshare"
             return df
     except Exception as e:
         logger.debug("[%s] akshare 兜底失败: %s", label, e)
@@ -62,6 +76,7 @@ def _ts_or_ak(ts_fn, ak_fn, label: str, bs_fn=None) -> pd.DataFrame:
             df = bs_fn()
             if df is not None and not df.empty:
                 logger.info("[%s] baostock 兜底成功", label)
+                _data_source_map[label] = "baostock"
                 return df
         except Exception as e:
             logger.debug("[%s] baostock 兜底失败: %s", label, e)
@@ -90,6 +105,23 @@ def _ak_financial_report(ts_code: str, report_type: str) -> pd.DataFrame:
 
 def get_income(ts_code: str) -> pd.DataFrame:
     """利润表（近8期）"""
+    from data import qmt_client
+    from data.qmt_client import QMTUnavailable
+    from data.qmt_schema_map import QMT_INCOME_TO_CN
+
+    def _qmt():
+        if not qmt_client.is_alive():
+            raise QMTUnavailable()
+        tables = qmt_client.get_financial(ts_code, years=3)
+        df = tables.get("Income", pd.DataFrame())
+        if df.empty:
+            raise QMTUnavailable("Income 表空")
+        rename = {k: v for k, v in QMT_INCOME_TO_CN.items() if k in df.columns}
+        out = df.rename(columns=rename)
+        if "报告期" in out.columns and "end_date" not in out.columns:
+            out["end_date"] = out["报告期"]
+        return out.head(8)
+
     return _ts_or_ak(
         lambda pro: _ts_call(lambda: pro.income(
             ts_code=ts_code,
@@ -99,11 +131,29 @@ def get_income(ts_code: str) -> pd.DataFrame:
         )).head(8),
         lambda: _ak_financial_report(ts_code, "income").head(8),
         "get_income",
+        qmt_fn=_qmt,
     )
 
 
 def get_balancesheet(ts_code: str) -> pd.DataFrame:
     """资产负债表（近4期）"""
+    from data import qmt_client
+    from data.qmt_client import QMTUnavailable
+    from data.qmt_schema_map import QMT_BALANCE_TO_CN
+
+    def _qmt():
+        if not qmt_client.is_alive():
+            raise QMTUnavailable()
+        tables = qmt_client.get_financial(ts_code, years=3)
+        df = tables.get("Balance", pd.DataFrame())
+        if df.empty:
+            raise QMTUnavailable("Balance 表空")
+        rename = {k: v for k, v in QMT_BALANCE_TO_CN.items() if k in df.columns}
+        out = df.rename(columns=rename)
+        if "报告期" in out.columns and "end_date" not in out.columns:
+            out["end_date"] = out["报告期"]
+        return out.head(4)
+
     return _ts_or_ak(
         lambda pro: _ts_call(lambda: pro.balancesheet(
             ts_code=ts_code,
@@ -114,11 +164,29 @@ def get_balancesheet(ts_code: str) -> pd.DataFrame:
         )).head(4),
         lambda: _ak_financial_report(ts_code, "balance").head(4),
         "get_balancesheet",
+        qmt_fn=_qmt,
     )
 
 
 def get_cashflow(ts_code: str) -> pd.DataFrame:
     """现金流量表（近4期）"""
+    from data import qmt_client
+    from data.qmt_client import QMTUnavailable
+    from data.qmt_schema_map import QMT_CASHFLOW_TO_CN
+
+    def _qmt():
+        if not qmt_client.is_alive():
+            raise QMTUnavailable()
+        tables = qmt_client.get_financial(ts_code, years=3)
+        df = tables.get("CashFlow", pd.DataFrame())
+        if df.empty:
+            raise QMTUnavailable("CashFlow 表空")
+        rename = {k: v for k, v in QMT_CASHFLOW_TO_CN.items() if k in df.columns}
+        out = df.rename(columns=rename)
+        if "报告期" in out.columns and "end_date" not in out.columns:
+            out["end_date"] = out["报告期"]
+        return out.head(4)
+
     return _ts_or_ak(
         lambda pro: _ts_call(lambda: pro.cashflow(
             ts_code=ts_code,
@@ -127,11 +195,28 @@ def get_cashflow(ts_code: str) -> pd.DataFrame:
         )).head(4),
         lambda: _ak_financial_report(ts_code, "cashflow").head(4),
         "get_cashflow",
+        qmt_fn=_qmt,
     )
 
 
 def get_fina_indicator(ts_code: str) -> pd.DataFrame:
     """财务指标（近8期）"""
+    from data import qmt_client
+    from data.qmt_client import QMTUnavailable
+    from data.qmt_schema_map import qmt_pershare_to_fina_indicator
+
+    def _qmt():
+        if not qmt_client.is_alive():
+            raise QMTUnavailable()
+        tables = qmt_client.get_financial(ts_code, years=3)
+        df = tables.get("PershareIndex", pd.DataFrame())
+        if df.empty:
+            raise QMTUnavailable("PershareIndex 表空")
+        out = qmt_pershare_to_fina_indicator(df)
+        if out.empty:
+            raise QMTUnavailable("PershareIndex 映射后为空")
+        return out.head(8)
+
     def _ak():
         try:
             import akshare as ak
@@ -157,6 +242,7 @@ def get_fina_indicator(ts_code: str) -> pd.DataFrame:
         )).head(8),
         _ak,
         "get_fina_indicator",
+        qmt_fn=_qmt,
     )
 
 
