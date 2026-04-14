@@ -817,7 +817,7 @@ _report_context_cache_date: str = ""
 _report_context_cache_lock = threading.Lock()
 
 
-def build_report_context(ts_code: str, name: str, progress_cb=None, time_lock: str = "") -> tuple[dict, dict]:
+def build_report_context(ts_code: str, name: str, progress_cb=None, time_lock: str = "", tradability=None) -> tuple[dict, dict]:
     """采集全量数据，返回 (context_dict, raw_data_dict)
 
     context_dict: 可直接注入 prompt 的文本字典
@@ -1074,6 +1074,16 @@ def build_report_context(ts_code: str, name: str, progress_cb=None, time_lock: s
         ctx["data_source_note"] = "⚠️ 情报可信度提示：数据源异常，本次分析数据可能不完整"
 
     _progress("数据采集完成！")
+
+    # Inject tradability info into raw for report footer / AI prompt
+    if tradability is not None:
+        raw["_tradability_status"] = tradability.status.value
+        raw["_tradability_warnings"] = list(tradability.warnings)
+        raw["_tradability_facts"] = dict(tradability.facts)
+
+    # Inject per-label data source map for audit trail
+    from data.tushare_client import get_data_source_map
+    raw["_data_source_map"] = get_data_source_map()
 
     # 写入当日缓存（回测模式不写入，避免污染缓存）
     if not time_lock:

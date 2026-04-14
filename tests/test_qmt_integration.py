@@ -236,3 +236,12 @@ def test_get_fina_indicator_uses_qmt(monkeypatch):
     assert not df.empty
     # 映射后应该包含 Tushare fina_indicator 的字段名
     assert "basic_eps" in df.columns or "bps" in df.columns or "roe" in df.columns
+
+
+def test_build_report_context_accepts_tradability_parameter():
+    """至少签名接受 tradability 参数。"""
+    import inspect
+    from data import report_data
+    sig = inspect.signature(report_data.build_report_context)
+    assert "tradability" in sig.parameters, \
+        f"build_report_context 缺少 tradability 参数: {list(sig.parameters.keys())}"
