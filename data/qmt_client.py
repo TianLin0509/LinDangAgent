@@ -216,3 +216,116 @@ def get_sector_stocks(sector: str) -> list[str]:
     if not stocks:
         raise QMTUnavailable(f"QMT 未返回板块 {sector} 成分")
     return [_denormalize_symbol(s) for s in stocks]
+
+
+# ══════════════════════════════════════════════════════════════
+# 扩展 API（单股重构新增）
+# ══════════════════════════════════════════════════════════════
+
+def get_instrument_info(symbol: str) -> Optional[dict]:
+    """
+    单股完整元信息（iscomplete=True 返回 83 字段）。
+    未查到返回 None（不 raise）——区别于 _ensure_connected 失败的 QMTUnavailable。
+    """
+    _ensure_connected()
+    sym = _normalize_symbol(symbol)
+    try:
+        detail = _xtdata.get_instrument_detail(sym, iscomplete=True)
+    except Exception as e:
+        raise QMTUnavailable(f"get_instrument_detail 失败: {e}")
+    return detail if detail else None
+
+
+def get_instrument_info_batch(symbols: list[str]) -> dict[str, dict]:
+    """批量元信息，约 1ms/只。key 保留带后缀（方便上游处理）。"""
+    _ensure_connected()
+    syms = [_normalize_symbol(s) for s in symbols]
+    try:
+        result = _xtdata.get_instrument_detail_list(syms, iscomplete=True)
+    except Exception as e:
+        raise QMTUnavailable(f"get_instrument_detail_list 失败: {e}")
+    return result or {}
+
+
+_FINANCIAL_TABLES = [
+    "Balance", "Income", "CashFlow", "Capital",
+    "Top10FlowHolder", "Top10Holder", "HolderNum", "PershareIndex",
+]
+
+
+def get_financial(symbol: str, years: int = 3) -> dict[str, pd.DataFrame]:
+    """
+    下载 + 查询 8 张财务表。窗口 [今天-years年, 今天]。
+    返回 {table_name: DataFrame}。失败 raise QMTUnavailable。
+    """
+    import datetime as _dt
+    _ensure_connected()
+    sym = _normalize_symbol(symbol)
+    end = _dt.date.today().strftime("%Y%m%d")
+    start = (_dt.date.today() - _dt.timedelta(days=years * 366)).strftime("%Y%m%d")
+
+    t0 = time.time()
+    try:
+        _xtdata.download_financial_data2(
+            [sym], table_list=_FINANCIAL_TABLES,
+            start_time=start, end_time=end,
+            callback=lambda d: None,
+        )
+    except Exception as e:
+        raise QMTUnavailable(f"download_financial_data2 失败: {e}")
+
+    try:
+        raw = _xtdata.get_financial_data(
+            [sym], table_list=_FINANCIAL_TABLES,
+            start_time=start, end_time=end,
+            report_type="report_time",
+        )
+    except Exception as e:
+        raise QMTUnavailable(f"get_financial_data 失败: {e}")
+
+    if not raw or sym not in raw:
+        raise QMTUnavailable(f"get_financial_data 返回空: {sym}")
+    per_sym = raw[sym]
+    if not isinstance(per_sym, dict):
+        raise QMTUnavailable(f"per-symbol 返回非 dict: {type(per_sym).__name__}")
+
+    out = {}
+    for t in _FINANCIAL_TABLES:
+        df = per_sym.get(t)
+        out[t] = df if isinstance(df, pd.DataFrame) else pd.DataFrame()
+
+    logger.info("[qmt] get_financial %s cost=%dms tables=%s",
+                sym, int((time.time() - t0) * 1000),
+                {k: len(v) for k, v in out.items()})
+    return out
+
+
+def get_trading_dates_before(end_date: str, count: int, market: str = "SH") -> list[str]:
+    """
+    返回 end_date（含）之前 count 个真实交易日，'YYYY-MM-DD' 升序。
+    end_date 格式: 'YYYY-MM-DD' 或 'YYYYMMDD'。
+    """
+    import datetime as _dt
+    _ensure_connected()
+
+    end_clean = end_date.replace("-", "")
+    end_dt = _dt.datetime.strptime(end_clean, "%Y%m%d").date()
+    start_dt = end_dt - _dt.timedelta(days=max(count * 2, 30))
+    start_str = start_dt.strftime("%Y%m%d")
+
+    try:
+        timestamps = _xtdata.get_trading_dates(
+            market, start_time=start_str, end_time=end_clean, count=-1,
+        )
+    except Exception as e:
+        raise QMTUnavailable(f"get_trading_dates 失败: {e}")
+
+    if not timestamps:
+        raise QMTUnavailable("get_trading_dates 返回空")
+
+    dates = [
+        _dt.datetime.fromtimestamp(t / 1000).strftime("%Y-%m-%d")
+        for t in timestamps
+    ]
+    dates.sort()
+    return dates[-count:]
