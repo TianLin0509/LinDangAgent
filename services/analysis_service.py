@@ -285,10 +285,22 @@ def run_comprehensive_analysis(
     if status_cb:
         status_cb(f"正在采集 {name}（{code6}）全量数据（舆情并行中）...")
 
+    # Pre-analysis tradability gate
+    from data.stock_gate import check_tradability, TradabilityBlocked
+    try:
+        tradability = check_tradability(ts_code)
+    except Exception as _gate_err:
+        logger.warning("[gate] check_tradability failed: %s", _gate_err)
+        tradability = None
+
+    if tradability is not None and tradability.hard_block:
+        raise TradabilityBlocked(tradability)
+
     context, raw_data = build_report_context(
         ts_code,
         name,
         progress_cb=data_progress_cb,
+        tradability=tradability,
     )
 
     if status_cb:

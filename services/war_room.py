@@ -409,7 +409,18 @@ def _run_war_room_v2(
         raise ValueError(f"未识别到股票：{stock_name}")
 
     from data.macro_intel import get_macro_context
-    context, raw_data = build_report_context(ts_code, resolved_name, time_lock=time_lock)
+
+    # Pre-analysis tradability gate
+    from data.stock_gate import TradabilityBlocked, check_tradability
+    try:
+        tradability = check_tradability(ts_code)
+    except Exception as _gate_err:
+        logger.warning("[gate] check_tradability failed: %s", _gate_err)
+        tradability = None
+    if tradability is not None and tradability.hard_block:
+        raise TradabilityBlocked(tradability)
+
+    context, raw_data = build_report_context(ts_code, resolved_name, time_lock=time_lock, tradability=tradability)
     price_df = raw_data.get("_price_df")
     indicators = compute_indicators(price_df) if price_df is not None and not price_df.empty else {}
     indicators_section = format_indicators_section(indicators)
@@ -743,7 +754,17 @@ def _run_war_room_legacy(
     # 宏观情报：全局当日缓存，首次采集后所有股票共享（不开线程，直接取）
     from data.macro_intel import get_macro_context
 
-    context, raw_data = build_report_context(ts_code, resolved_name)
+    # Pre-analysis tradability gate
+    from data.stock_gate import TradabilityBlocked, check_tradability
+    try:
+        tradability = check_tradability(ts_code)
+    except Exception as _gate_err:
+        logger.warning("[gate] check_tradability failed: %s", _gate_err)
+        tradability = None
+    if tradability is not None and tradability.hard_block:
+        raise TradabilityBlocked(tradability)
+
+    context, raw_data = build_report_context(ts_code, resolved_name, tradability=tradability)
     price_df = raw_data.get("_price_df")
     indicators = compute_indicators(price_df) if price_df is not None and not price_df.empty else {}
     indicators_section = format_indicators_section(indicators)

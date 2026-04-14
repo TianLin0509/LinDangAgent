@@ -1968,5 +1968,17 @@ if __name__ == "__main__":
     try:
         COMMANDS[sys.argv[1]](sys.argv[2:])
     except Exception as exc:
+        try:
+            from data.stock_gate import TradabilityBlocked
+            if isinstance(exc, TradabilityBlocked):
+                reason = exc.result.status.value
+                warnings = "; ".join(exc.result.warnings) if exc.result.warnings else ""
+                msg = f"⚠️ 此股已退市或异常（{reason}），不进行分析。"
+                if warnings:
+                    msg += f" 理由：{warnings}"
+                _json_out({"status": "blocked", "reason": reason, "message": msg})
+                sys.exit(2)
+        except ImportError:
+            pass
         _json_out({"status": "error", "message": str(exc)})
         sys.exit(1)
