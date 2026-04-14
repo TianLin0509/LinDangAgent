@@ -18,6 +18,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from services.decision_tree import load_tree, compute_weighted, apply_corrections, format_tree_for_prompt
+from ai.prompts_analyst import build_round1_system, ROUND2_SYSTEM, build_round2_user, build_report_header
+
 logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -26,35 +29,40 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # 每个阵容定义 3 将领各自用什么模型 + 刘亚楼 + 林彪
 
 WAR_ROOM_PRESETS = {
-    # ── 负载均衡阵容（推荐，三路模型分散避免限流，Claude裁决）──
+    # ── 新版：两轮深度分析 ──────────────────────────────────────
+    "opus": {
+        "label": "Opus 深度分析（两轮自我对话）",
+        "analyst": "🧠 Claude Opus（MAX）",
+    },
+    "sonnet": {
+        "label": "Sonnet 深度分析（速度优先）",
+        "analyst": "⚡ Claude Sonnet（MAX）",
+    },
+    # ── 旧版：多将领模式（Top10/批量兼容）──────────────────────
     "balanced": {
         "label": "负载均衡阵容（Gemini+Codex将领，Claude Opus裁决）",
         "scouts": [
-            "🔮 Gemini CLI（免费）",     # 黄永胜·攻势：Gemini联网搜催化
-            "🤖 Codex CLI（Plus）",       # 韩先楚·侦察：Codex联网查财务
-            "🔮 Gemini CLI（免费）",     # 邓华·全局：Gemini联网看板块
+            "🔮 Gemini CLI（免费）",
+            "🤖 Codex CLI（Plus）",
+            "🔮 Gemini CLI（免费）",
         ],
-        "commander": "🧠 Claude Opus（MAX）",   # 林彪：Claude Opus 裁决
+        "commander": "🧠 Claude Opus（MAX）",
+        "_legacy": True,
     },
-    # ── 最高配置（全Claude，关键股票专用）───────────────────────
     "max": {
         "label": "全 Claude MAX 阵容（Sonnet将领+Opus裁决）",
-        "scouts": [
-            "⚡ Claude Sonnet（MAX）",    # 黄永胜
-            "⚡ Claude Sonnet（MAX）",    # 韩先楚
-            "⚡ Claude Sonnet（MAX）",    # 邓华
-        ],
-        "commander": "🧠 Claude Opus（MAX）",  # 林彪：Opus裁决
+        "scouts": ["⚡ Claude Sonnet（MAX）"] * 3,
+        "commander": "🧠 Claude Opus（MAX）",
+        "_legacy": True,
     },
-    # ── 经济阵容（全免费，单股或测试用）─────────────────────────
     "gemini": {
         "label": "全 Gemini 阵容（免费，单股可用，批量易限流）",
         "scouts": ["🔮 Gemini CLI（免费）"] * 3,
         "commander": "🔮 Gemini CLI（免费）",
+        "_legacy": True,
     },
 }
-
-DEFAULT_PRESET = "balanced"
+DEFAULT_PRESET = "opus"
 
 
 @dataclass
@@ -355,8 +363,351 @@ def run_war_room(
     username: str = "cli",
     preset: str = DEFAULT_PRESET,
     skip_extra_recon: bool = False,
+    time_lock: str = "",            # NEW: data cutoff date YYYYMMDD
+    skip_report_save: bool = False,  # NEW: don't write to reports.db
 ) -> WarRoomResult:
-    """四野指挥部完整流程"""
+    """Main entry point for stock analysis.
+
+    New presets (opus/sonnet) use 2-round deep analysis.
+    Legacy presets (balanced/max/gemini) use old multi-general flow.
+    """
+    cfg = WAR_ROOM_PRESETS.get(preset)
+    if not cfg:
+        logger.error("Unknown preset: %s", preset)
+        return WarRoomResult(stock_name=stock_name)
+
+    if cfg.get("_legacy"):
+        return _run_war_room_legacy(stock_name, username, preset, skip_extra_recon)
+
+    return _run_war_room_v2(stock_name, username, cfg, time_lock=time_lock, skip_report_save=skip_report_save)
+
+
+def _run_war_room_v2(
+    stock_name: str,
+    username: str,
+    preset_cfg: dict,
+    time_lock: str = "",
+    skip_report_save: bool = False,
+) -> WarRoomResult:
+    """2-round Opus deep analysis flow."""
+    from data.indicators import compute_indicators, format_indicators_section
+    from data.report_data import build_report_context
+    from data.tushare_client import resolve_stock
+    from knowledge.injector import build_knowledge_context
+    from repositories.report_repo import init_db, save_report
+    from services.analysis_service import apply_bucket_correction, parse_scores
+
+    report_id = str(uuid.uuid4())
+    analyst_model = preset_cfg["analyst"]
+    CLAUDE_FALLBACK = "⚡ Claude Sonnet（MAX）"
+
+    # ── Phase 0: Scout (data collection) ────────────────────────
+    logger.info("[war_room_v2] Phase 0: 侦察 — %s", stock_name)
+
+    ts_code, resolved_name, resolve_warn = resolve_stock(stock_name)
+    if not ts_code:
+        raise ValueError(f"未识别到股票：{stock_name}")
+
+    from data.macro_intel import get_macro_context
+
+    # Pre-analysis tradability gate
+    from data.stock_gate import TradabilityBlocked, check_tradability
+    try:
+        tradability = check_tradability(ts_code)
+    except Exception as _gate_err:
+        logger.warning("[gate] check_tradability failed: %s", _gate_err)
+        tradability = None
+    if tradability is not None and tradability.hard_block:
+        raise TradabilityBlocked(tradability)
+
+    context, raw_data = build_report_context(ts_code, resolved_name, time_lock=time_lock, tradability=tradability)
+    price_df = raw_data.get("_price_df")
+    indicators = compute_indicators(price_df) if price_df is not None and not price_df.empty else {}
+    indicators_section = format_indicators_section(indicators)
+    snap = context.get("price_summary", "")
+    knowledge_ctx = build_knowledge_context(
+        stock_code=ts_code, stock_name=resolved_name, model_name=analyst_model,
+        price_snapshot=snap, indicators=indicators, time_lock=time_lock,
+    )
+
+    if not time_lock:
+        # 舆情并行采集
+        _sentiment_result = [None]
+        import threading
+        def _sentiment_worker():
+            try:
+                from data.stock_sentiment import fetch_stock_sentiment
+                _sentiment_result[0] = fetch_stock_sentiment(ts_code=ts_code, stock_name=resolved_name)
+            except Exception as exc:
+                logger.debug("[war_room_v2] sentiment worker failed: %s", exc)
+
+        sentiment_thread = threading.Thread(target=_sentiment_worker, daemon=True)
+        sentiment_thread.start()
+
+        # 等待舆情
+        sentiment_ctx = ""
+        if sentiment_thread.is_alive():
+            sentiment_thread.join(timeout=30)
+        if _sentiment_result[0]:
+            try:
+                from data.stock_sentiment import format_sentiment_for_prompt
+                sentiment_ctx = format_sentiment_for_prompt(_sentiment_result[0])
+            except Exception:
+                pass
+        if not sentiment_ctx or sentiment_ctx.strip() == "【雪球舆情参考】":
+            sentiment_ctx = "（舆情数据采集失败或不足，请以基本面和技术面为主要判断依据）"
+
+        macro_full, macro_brief = "", ""
+        try:
+            macro_full, macro_brief = get_macro_context()
+        except Exception:
+            pass
+        if not macro_brief:
+            macro_brief = "（宏观数据采集失败，请以个股基本面为主要判断依据）"
+    else:
+        sentiment_ctx = "（回测模式：舆情数据不注入）"
+        macro_brief = "（回测模式：宏观数据不注入）"
+
+    # 构建数据包（复用现有函数）
+    from ai.prompts_report import build_war_room_prompts
+    full_data_brief, _system_prompt, _output_formats = build_war_room_prompts(
+        name=resolved_name,
+        ts_code=ts_code,
+        context=context,
+        price_snapshot=snap,
+        indicators_section=indicators_section,
+        knowledge_context=knowledge_ctx,
+        sentiment_context=sentiment_ctx,
+        macro_context=macro_brief,
+    )
+
+    # 注入每日大盘深度分析（当日首次触发 Opus 分析，后续缓存）
+    market_md = ""
+    if not time_lock:
+        from services.market_analysis import get_or_run_market_analysis
+        market_md = get_or_run_market_analysis(analyst_model)
+    if market_md:
+        full_data_brief = market_md + "\n\n" + full_data_brief
+
+    # 注入进化经验
+    experience_text = _get_experience_lessons(ts_code, resolved_name)
+
+    # 加载决策树
+    tree = load_tree()
+    tree_text = format_tree_for_prompt(tree["trees"])
+
+    # ── Phase 1: Round 1 — Deep Analysis ────────────────────────
+    logger.info("[war_room_v2] Phase 1: Round 1 deep analysis with %s", analyst_model)
+    round1_system = build_round1_system(tree_text, experience_text)
+    round1_text = _call_single_model(full_data_brief, round1_system, analyst_model, max_tokens=8000)
+
+    # Parse scores
+    round1_scores = parse_scores(round1_text, tree["weights"])
+    if not round1_scores or round1_scores.get("_parse_failed"):
+        logger.warning("[war_room_v2] Round 1 score parse failed, retrying with Sonnet")
+        round1_text = _call_single_model(full_data_brief, round1_system, CLAUDE_FALLBACK, max_tokens=8000)
+        round1_scores = parse_scores(round1_text, tree["weights"])
+
+    if not round1_scores:
+        round1_scores = {"基本面": 50, "预期差": 50, "资金面": 50, "技术面": 50, "综合加权": 50.0, "_parse_failed": True}
+
+    # ── Phase 2: Round 2 — Self-Critique ────────────────────────
+    logger.info("[war_room_v2] Phase 2: Round 2 self-critique with %s", analyst_model)
+    round2_user = build_round2_user(round1_text)
+    round2_text = _call_single_model(round2_user, ROUND2_SYSTEM, analyst_model, max_tokens=6000)
+
+    # Parse score corrections
+    final_scores = _apply_round2_corrections(round1_scores, round2_text, tree)
+
+    # Apply code-level corrections
+    final_scores = apply_corrections(
+        final_scores,
+        tree["correction_rules"],
+        high_prob_fatal_count=_extract_fatal_count(round2_text),
+    )
+    # Rename _final to 综合加权 if decision_tree module uses _final
+    if "_final" in final_scores and "综合加权" not in final_scores:
+        final_scores["综合加权"] = final_scores.pop("_final")
+
+    # Generate rating
+    final_scores = apply_bucket_correction(final_scores)
+
+    # ── Phase 3: Assemble Report ────────────────────────────────
+    logger.info("[war_room_v2] Phase 3: 组装报告")
+    combined_md = _build_v2_report(resolved_name, round1_text, round2_text, final_scores)
+
+    if not skip_report_save:
+        try:
+            init_db()
+            save_report(
+                report_id=report_id,
+                openid="war_room",
+                stock_name=resolved_name,
+                stock_code=ts_code,
+                summary=final_scores.get("_rating", "分析完成"),
+                markdown_text=combined_md,
+            )
+        except Exception as exc:
+            logger.error("[war_room_v2] save_report failed: %r", exc)
+
+    if not skip_report_save:
+        _save_v2_tracker(report_id, resolved_name, ts_code, round1_scores, final_scores, round1_text, round2_text)
+
+    result = WarRoomResult(
+        stock_name=resolved_name,
+        stock_code=ts_code,
+        general_reports=[{"report_text": round1_text, "scores": round1_scores}],
+        final_report=round2_text,
+        final_summary=final_scores.get("_rating", ""),
+        final_scores=final_scores,
+        combined_markdown=combined_md,
+        report_id=report_id,
+    )
+    logger.info("[war_room_v2] Done: %s score=%s", resolved_name, final_scores.get("综合加权", "?"))
+
+    return result
+
+
+def _get_experience_lessons(ts_code: str, stock_name: str) -> str:
+    """Retrieve relevant lessons from experience DB."""
+    try:
+        from knowledge.experience_db import retrieve_lessons
+        return retrieve_lessons(ts_code, stock_name)
+    except Exception as e:
+        logger.warning("[war_room_v2] experience retrieval failed: %s", e)
+        return ""
+
+
+def _apply_round2_corrections(round1_scores: dict, round2_text: str, tree: dict) -> dict:
+    """Parse Round 2 score corrections and apply to Round 1 scores."""
+    scores = dict(round1_scores)
+    # Remove internal flags from Round 1 that shouldn't carry over
+    scores = {k: v for k, v in scores.items() if not k.startswith("_")}
+
+    m = re.search(
+        r"<<<SCORE_CORRECTIONS>>>(.*?)<<<END_SCORE_CORRECTIONS>>>",
+        round2_text, re.DOTALL
+    )
+    if not m:
+        logger.warning("[war_room_v2] No SCORE_CORRECTIONS block in Round 2")
+        scores["综合加权"] = compute_weighted(scores, tree["weights"])
+        return scores
+
+    block = m.group(1)
+    for dim in ("基本面", "预期差", "资金面", "技术面"):
+        pat = re.compile(rf"{dim}:\s*([+-]?\d+)\s*分")
+        dm = pat.search(block)
+        if dm:
+            correction = int(dm.group(1))
+            correction = max(-10, min(10, correction))
+            scores[dim] = max(0, min(100, scores.get(dim, 50) + correction))
+
+    scores["综合加权"] = compute_weighted(scores, tree["weights"])
+    return scores
+
+
+def _extract_fatal_count(round2_text: str) -> int:
+    """Extract high-probability fatal count from Round 2."""
+    m = re.search(
+        r"<<<HIGH_PROB_FATAL_COUNT>>>\s*(\d+)\s*<<<END_HIGH_PROB_FATAL_COUNT>>>",
+        round2_text
+    )
+    if m:
+        return int(m.group(1))
+    # Fallback: count "高" probability in Pre-mortem section
+    premortem = round2_text.split("Pre-mortem")[-1] if "Pre-mortem" in round2_text else ""
+    return len(re.findall(r"概率[：:]\s*高", premortem))
+
+
+def _strip_markers(text: str) -> str:
+    """Remove parsing markers and noise from AI output before display."""
+    # Remove structured blocks that are already extracted by code
+    text = re.sub(r"<<<SCORES>>>.*?<<<END_SCORES>>>", "", text, flags=re.DOTALL)
+    text = re.sub(r"<<<SCORE_CORRECTIONS>>>.*?<<<END_SCORE_CORRECTIONS>>>", "", text, flags=re.DOTALL)
+    text = re.sub(r"<<<HIGH_PROB_FATAL_COUNT>>>.*?<<<END_HIGH_PROB_FATAL_COUNT>>>", "", text, flags=re.DOTALL)
+    # Remove remaining bare markers
+    text = re.sub(r"<<<\w+>>>", "", text)
+    # Remove standalone --- separator lines (AI-generated noise)
+    text = re.sub(r"\n-{3,}\n", "\n\n", text)
+    # Clean up excessive blank lines
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def _build_v2_report(stock_name: str, round1_text: str, round2_text: str, final_scores: dict) -> str:
+    """Assemble the final v2 report markdown."""
+    header = build_report_header(stock_name, final_scores)
+    dims = ("基本面", "预期差", "资金面", "技术面")
+    score_line = " | ".join(f"{d}: {final_scores.get(d, 50):.0f}" for d in dims)
+    composite = final_scores.get("综合加权", 50)
+    rating = final_scores.get("_rating", "按兵不动")
+
+    clean_r1 = _strip_markers(round1_text)
+    clean_r2 = _strip_markers(round2_text)
+
+    return f"""{header}
+
+**四维评分**：{score_line}
+**综合加权**：{composite:.0f} — {rating}
+
+---
+
+## 深度分析（Round 1）
+
+{clean_r1}
+
+---
+
+## 魔鬼代言人质疑（Round 2）
+
+{clean_r2}
+"""
+
+
+def _save_v2_tracker(
+    report_id: str, stock_name: str, ts_code: str,
+    round1_scores: dict, final_scores: dict,
+    round1_text: str, round2_text: str,
+):
+    """Save v2 tracker entry for evolution engine."""
+    import datetime as _dt
+    tracker_path = BASE_DIR / "data" / "knowledge" / "war_room_tracker.jsonl"
+    dims = ("基本面", "预期差", "资金面", "技术面")
+
+    # Extract tree paths from Round 1 text
+    tree_paths = {}
+    for dim in dims:
+        pat = re.compile(rf"{dim}.*?决策树路径[：:]\s*(.+?)(?:\n|$)", re.MULTILINE)
+        m = pat.search(round1_text)
+        if m:
+            tree_paths[dim] = m.group(1).strip()
+
+    entry = {
+        "report_id": report_id,
+        "stock_name": stock_name,
+        "ts_code": ts_code,
+        "timestamp": _dt.datetime.now().isoformat(),
+        "version": "v2",
+        "round1_scores": {d: round1_scores.get(d) for d in list(dims) + ["综合加权"]},
+        "final_scores": {d: final_scores.get(d) for d in list(dims) + ["综合加权"]},
+        "rating": final_scores.get("_rating", ""),
+        "tree_paths": tree_paths,
+    }
+
+    try:
+        with open(tracker_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception as exc:
+        logger.warning("[war_room_v2] tracker save failed: %r", exc)
+
+
+def _run_war_room_legacy(
+    stock_name: str,
+    username: str = "cli",
+    preset: str = "balanced",
+    skip_extra_recon: bool = False,
+) -> WarRoomResult:
+    """Legacy multi-general war room flow. Used by old presets (balanced/max/gemini)."""
     from ai.prompts_report import build_report_prompt, build_war_room_prompts
     from ai.prompts_war_room import (
         GENERAL_PERSONALITIES,
@@ -403,7 +754,17 @@ def run_war_room(
     # 宏观情报：全局当日缓存，首次采集后所有股票共享（不开线程，直接取）
     from data.macro_intel import get_macro_context
 
-    context, raw_data = build_report_context(ts_code, resolved_name)
+    # Pre-analysis tradability gate
+    from data.stock_gate import TradabilityBlocked, check_tradability
+    try:
+        tradability = check_tradability(ts_code)
+    except Exception as _gate_err:
+        logger.warning("[gate] check_tradability failed: %s", _gate_err)
+        tradability = None
+    if tradability is not None and tradability.hard_block:
+        raise TradabilityBlocked(tradability)
+
+    context, raw_data = build_report_context(ts_code, resolved_name, tradability=tradability)
     price_df = raw_data.get("_price_df")
     indicators = compute_indicators(price_df) if price_df is not None and not price_df.empty else {}
     indicators_section = format_indicators_section(indicators)

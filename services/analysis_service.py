@@ -65,14 +65,14 @@ def _cleanup_report_text(text: str) -> str:
 
 # 权重配置（代码计算，不依赖 LLM 算数）
 SCORE_WEIGHTS = {
-    "基本面": 0.15,
-    "预期差": 0.35,
-    "资金面": 0.30,
-    "技术面": 0.20,
+    "预期差": 0.30,
+    "技术面": 0.40,
+    "基本面": 0.20,
+    "资金面": 0.10,
 }
 
 
-def parse_scores(text: str) -> dict | None:
+def parse_scores(text: str, weights: dict | None = None) -> dict | None:
     """从 <<<SCORES>>>...<<<END_SCORES>>> 块提取评分并在代码中加权计算。
 
     如果标记块缺失（Gemini 等模型不遵守格式），回退到全文扫描。
@@ -124,9 +124,10 @@ def parse_scores(text: str) -> dict | None:
         return None
 
     # 代码计算加权综合分
+    w = weights or SCORE_WEIGHTS
     weighted_sum = 0.0
     total_weight = 0.0
-    for dim, weight in SCORE_WEIGHTS.items():
+    for dim, weight in w.items():
         if dim in scores:
             weighted_sum += scores[dim] * weight
             total_weight += weight
@@ -284,10 +285,22 @@ def run_comprehensive_analysis(
     if status_cb:
         status_cb(f"正在采集 {name}（{code6}）全量数据（舆情并行中）...")
 
+    # Pre-analysis tradability gate
+    from data.stock_gate import check_tradability, TradabilityBlocked
+    try:
+        tradability = check_tradability(ts_code)
+    except Exception as _gate_err:
+        logger.warning("[gate] check_tradability failed: %s", _gate_err)
+        tradability = None
+
+    if tradability is not None and tradability.hard_block:
+        raise TradabilityBlocked(tradability)
+
     context, raw_data = build_report_context(
         ts_code,
         name,
         progress_cb=data_progress_cb,
+        tradability=tradability,
     )
 
     if status_cb:

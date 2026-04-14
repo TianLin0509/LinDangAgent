@@ -28,6 +28,7 @@ _pro = None
 _ts_err = ""
 _init_done = threading.Event()
 _data_source = "fallback"
+_data_source_map: dict[str, str] = {}
 
 
 def _init_tushare_bg():
@@ -101,6 +102,13 @@ def get_data_source() -> str:
         return _data_source
 
 
+def get_data_source_map() -> dict:
+    """返回每个 label 独立的数据源映射（拷贝）。"""
+    global _data_source_map
+    with _init_lock:
+        return dict(_data_source_map)
+
+
 def get_pro():
     return _get_pro()
 
@@ -154,12 +162,26 @@ def _retry_call(fn, retries=3, delay=1):
 # 三层兜底调度器
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _try_with_fallback(tushare_fn, akshare_fn=None, eastmoney_fn=None, baostock_fn=None, sina_fn=None, label="数据"):
-    """依次尝试 Tushare → 东方财富 → AKShare → Baostock，返回第一个成功的结果
+def _try_with_fallback(tushare_fn, akshare_fn=None, eastmoney_fn=None, baostock_fn=None, sina_fn=None, label="数据", qmt_fn=None):
+    """依次尝试 QMT → Tushare → 东方财富 → AKShare → Baostock → Sina，返回第一个成功的结果
 
+    优先级：QMT（券商直连）> Tushare（数据最全）> 东方财富（最快最稳）> AKShare > Baostock > Sina
     优先级依据实测：东方财富最快最稳(0.23s)，AKShare批量不稳，Baostock稳但慢(1.75s)
     """
-    global _data_source
+    global _data_source, _data_source_map
+
+    # 第零层：QMT（券商直连，最高优先级；未登录/失败静默降级）
+    if qmt_fn is not None:
+        try:
+            result, err = qmt_fn()
+            if err is None:
+                with _init_lock:
+                    _data_source = "qmt"
+                    _data_source_map[label] = "qmt"
+                return result, None
+        except Exception as e:
+            # QMTUnavailable 以及所有异常一律静默降级（预期：QMT 可能没登录）
+            logger.debug("[%s] qmt 失败（降级）: %s", label, e)
 
     # 第一层：Tushare（数据最全）
     if _get_pro() is not None:
@@ -168,6 +190,7 @@ def _try_with_fallback(tushare_fn, akshare_fn=None, eastmoney_fn=None, baostock_
             if err is None:
                 with _init_lock:
                     _data_source = "tushare"
+                    _data_source_map[label] = "tushare"
                 return result, None
         except Exception as e:
             logger.debug("[%s] tushare 失败: %s", label, e)
@@ -179,6 +202,7 @@ def _try_with_fallback(tushare_fn, akshare_fn=None, eastmoney_fn=None, baostock_
             if err is None:
                 with _init_lock:
                     _data_source = "eastmoney"
+                    _data_source_map[label] = "eastmoney"
                 return result, None
         except Exception as e:
             logger.debug("[%s] eastmoney 失败: %s", label, e)
@@ -190,6 +214,7 @@ def _try_with_fallback(tushare_fn, akshare_fn=None, eastmoney_fn=None, baostock_
             if err is None:
                 with _init_lock:
                     _data_source = "akshare"
+                    _data_source_map[label] = "akshare"
                 return result, None
         except Exception as e:
             logger.debug("[%s] akshare 失败: %s", label, e)
@@ -201,6 +226,7 @@ def _try_with_fallback(tushare_fn, akshare_fn=None, eastmoney_fn=None, baostock_
             if err is None:
                 with _init_lock:
                     _data_source = "baostock"
+                    _data_source_map[label] = "baostock"
                 return result, None
         except Exception as e:
             logger.debug("[%s] baostock 失败: %s", label, e)
@@ -212,12 +238,14 @@ def _try_with_fallback(tushare_fn, akshare_fn=None, eastmoney_fn=None, baostock_
             if err is None:
                 with _init_lock:
                     _data_source = "sina"
+                    _data_source_map[label] = "sina"
                 return result, None
         except Exception as e:
             logger.debug("[%s] sina 失败: %s", label, e)
 
     with _init_lock:
         _data_source = "unavailable"
+        _data_source_map[label] = "unavailable"
     # 根据 label 返回符合调用方类型期望的默认值
     if label in ("K线", "历史估值"):
         default = pd.DataFrame()
@@ -329,6 +357,20 @@ def resolve_stock(query: str) -> tuple[str, str, str | None]:
 @compat_cache(ttl=600, show_spinner=False)
 def get_basic_info(ts_code: str) -> tuple[dict, str | None]:
     from data.fallback import ak_get_basic_info, em_get_basic_info
+    from data import qmt_client
+    from data.qmt_client import QMTUnavailable
+    from data.qmt_schema_map import qmt_detail_to_tushare_dict
+
+    def _qmt():
+        if not qmt_client.is_alive():
+            raise QMTUnavailable("QMT not alive")
+        detail = qmt_client.get_instrument_info(ts_code)
+        if not detail:
+            raise QMTUnavailable(f"{ts_code} 无 QMT 元信息")
+        info = qmt_detail_to_tushare_dict(detail)
+        if not info:
+            raise QMTUnavailable("schema map 返空")
+        return info, None
 
     def _tushare():
         if _get_pro() is None:
@@ -379,12 +421,34 @@ def get_basic_info(ts_code: str) -> tuple[dict, str | None]:
         baostock_fn=lambda: bs_get_basic_info(ts_code),
         sina_fn=lambda: sina_get_realtime_quote(ts_code),
         label="基本信息",
+        qmt_fn=_qmt,
     )
 
 
 @compat_cache(ttl=300, show_spinner=False)
 def get_price_df(ts_code: str, days: int = 140) -> tuple[pd.DataFrame, str | None]:
     from data.fallback import ak_get_price_df, em_get_price_df, bs_get_price_df
+    from data import qmt_client
+    from data.qmt_client import QMTUnavailable
+
+    def _qmt():
+        # QMT 未登录 → is_alive 返回 False → raise 触发降级
+        if not qmt_client.is_alive():
+            raise QMTUnavailable("qmt not alive")
+        df = qmt_client.get_kline(ts_code, period="1d", count=days, adjust="front")
+        if df is None or df.empty:
+            return pd.DataFrame(), "QMT 无 K 线"
+        # 英文列 → 项目标准中文列 schema
+        out = df.reset_index().rename(columns={
+            "index": "日期",
+            "open": "开盘", "high": "最高", "low": "最低", "close": "收盘",
+            "volume": "成交量", "amount": "成交额",
+        })
+        if "日期" not in out.columns and "time" in out.columns:
+            out = out.rename(columns={"time": "日期"})
+        if "涨跌幅" not in out.columns:
+            out["涨跌幅"] = out["收盘"].pct_change() * 100
+        return out, None
 
     def _tushare():
         if _get_pro() is None:
@@ -409,12 +473,36 @@ def get_price_df(ts_code: str, days: int = 140) -> tuple[pd.DataFrame, str | Non
         lambda: em_get_price_df(ts_code, days),
         baostock_fn=lambda: bs_get_price_df(ts_code, days),
         label="K线",
+        qmt_fn=_qmt,
     )
 
 
 @compat_cache(ttl=600, show_spinner=False)
 def get_financial(ts_code: str) -> tuple[str, str | None]:
     from data.fallback import ak_get_financial
+    from data import qmt_client
+    from data.qmt_client import QMTUnavailable
+    from data.qmt_schema_map import qmt_financials_to_tushare_text
+    import pandas as pd
+
+    def _qmt():
+        if not qmt_client.is_alive():
+            raise QMTUnavailable("QMT not alive")
+        try:
+            tables = qmt_client.get_financial(ts_code, years=3)
+        except QMTUnavailable:
+            raise
+        except Exception as e:
+            raise QMTUnavailable(f"qmt_client.get_financial 异常: {e}")
+
+        # 核心表门控：Balance / Income / PershareIndex 任一空 → 整体降级
+        CORE = ("Balance", "Income", "PershareIndex")
+        empty_core = [k for k in CORE if tables.get(k, pd.DataFrame()).empty]
+        if empty_core:
+            raise QMTUnavailable(f"QMT 核心财务表空: {empty_core}")
+
+        text = qmt_financials_to_tushare_text(tables)
+        return text, None
 
     def _tushare():
         if _get_pro() is None:
@@ -456,6 +544,7 @@ def get_financial(ts_code: str) -> tuple[str, str | None]:
         lambda: ak_get_financial(ts_code),
         None,
         label="财务",
+        qmt_fn=_qmt,
     )
 
 

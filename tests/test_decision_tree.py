@@ -1,0 +1,113 @@
+"""
+Tests for services/decision_tree.py
+"""
+
+import pytest
+from services.decision_tree import (
+    load_tree,
+    reload_tree,
+    compute_weighted,
+    apply_corrections,
+    format_tree_for_prompt,
+    record_tree_path,
+    _DIMS,
+)
+
+
+def test_load_decision_tree():
+    """Verify weights load correctly from decision_tree.json."""
+    config = reload_tree()
+    weights = config["weights"]
+    assert weights["预期差"] == 0.30
+    assert weights["技术面"] == 0.40
+    assert weights["基本面"] == 0.20
+    assert weights["资金面"] == 0.10
+    assert abs(sum(weights.values()) - 1.0) < 1e-9
+
+
+def test_compute_weighted_score():
+    """scores {基本面:60, 预期差:80, 资金面:70, 技术面:65} should give 72.0."""
+    scores = {"基本面": 60, "预期差": 80, "资金面": 70, "技术面": 65}
+    weights = {"基本面": 0.10, "预期差": 0.40, "资金面": 0.30, "技术面": 0.20}
+    result = compute_weighted(scores, weights)
+    # 60*0.10 + 80*0.40 + 70*0.30 + 65*0.20 = 6 + 32 + 21 + 13 = 72.0
+    assert result == 72.0
+
+
+def test_apply_corrections_resonance():
+    """预期差>=75 and 资金面>=70 → +3 bonus."""
+    scores = {"基本面": 60, "预期差": 80, "资金面": 70, "技术面": 65}
+    result = apply_corrections(scores, {})
+    assert result.get("_resonance_bonus") is True
+    # composite = 80*0.30 + 65*0.40 + 60*0.20 + 70*0.10 = 24+26+12+7 = 69.0 + 3 = 72.0
+    assert result["_final"] == pytest.approx(72.0, abs=0.1)
+
+
+def test_apply_corrections_divergence():
+    """预期差>=75 and 资金面<=45 → -5 penalty."""
+    scores = {"基本面": 60, "预期差": 80, "资金面": 40, "技术面": 65}
+    result = apply_corrections(scores, {})
+    assert result.get("_divergence_penalty") is True
+    # composite = 80*0.30 + 65*0.40 + 60*0.20 + 40*0.10 = 24+26+12+4 = 66.0 - 5 = 61.0
+    assert result["_final"] == pytest.approx(61.0, abs=0.1)
+
+
+def test_apply_corrections_bucket_cap():
+    """Any dim <=30 → cap composite at 60."""
+    scores = {"基本面": 60, "预期差": 80, "资金面": 30, "技术面": 65}
+    result = apply_corrections(scores, {})
+    assert result.get("_bucket_capped") is True
+    assert result["_final"] <= 60
+
+
+def test_apply_corrections_fundamental_breaker():
+    """基本面<=25 → cap composite at 30 (overrides bucket)."""
+    scores = {"基本面": 20, "预期差": 80, "资金面": 30, "技术面": 65}
+    result = apply_corrections(scores, {})
+    assert result.get("_fundamental_breaker") is True
+    assert result.get("_bucket_capped") is not True
+    assert result["_final"] <= 30
+
+
+def test_apply_premortem_cap():
+    """high_prob_fatal>=1 → cap composite at 70."""
+    scores = {"基本面": 70, "预期差": 85, "资金面": 80, "技术面": 75}
+    result = apply_corrections(scores, {}, high_prob_fatal_count=1)
+    assert result.get("_premortem_cap") is True
+    assert result["_final"] <= 70
+
+
+def test_format_tree_for_prompt():
+    """Output contains '预期差', 'Q1', '催化'."""
+    config = reload_tree()
+    output = format_tree_for_prompt(config["trees"])
+    assert "预期差" in output
+    assert "Q1" in output
+    assert "催化" in output
+
+
+def test_record_tree_path():
+    """Verify formatting of traversal path."""
+    path = record_tree_path("预期差", ["是", "A类", "30天内", "未定价", "单季超预期"], 75)
+    assert path == "预期差: 是→A类→30天内→未定价→单季超预期→75分"
+    assert "预期差" in path
+    assert "75分" in path
+
+
+def test_compute_weighted_partial_scores():
+    """Only 3 dimensions provided (missing 基本面); normalization uses sum of present weights."""
+    scores = {"预期差": 80, "资金面": 70, "技术面": 65}
+    weights = {"基本面": 0.10, "预期差": 0.40, "资金面": 0.30, "技术面": 0.20}
+    result = compute_weighted(scores, weights)
+    # Only 预期差, 资金面, 技术面 contribute; effective weights sum to 0.90
+    # (80*0.40 + 70*0.30 + 65*0.20) / 0.90 = (32 + 21 + 13) / 0.90 = 66/0.90 ≈ 73.3
+    expected = round(66 / 0.90, 1)
+    assert result == pytest.approx(expected, abs=0.1)
+
+
+def test_bucket_effect_ignores_non_dim_keys():
+    """Extra non-dimension key 'rank': 5 must NOT trigger bucket effect."""
+    # All 4 known dimensions are >= 50, so bucket must not fire.
+    scores = {"基本面": 60, "预期差": 70, "资金面": 55, "技术面": 50, "rank": 5}
+    result = apply_corrections(scores, {})
+    assert result.get("_bucket_capped") is not True
