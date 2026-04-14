@@ -70,3 +70,58 @@ def test_get_price_df_uses_qmt(monkeypatch):
     for col in ["日期", "开盘", "最高", "最低", "收盘", "成交量"]:
         assert col in df.columns, f"缺少列 {col}: 实际={list(df.columns)}"
     assert len(df) == 2
+
+
+def test_data_source_map_per_label():
+    """每个 label 独立记录 data_source。"""
+    from data import tushare_client
+    tushare_client._data_source_map = {}
+
+    def qmt_a():
+        return ({"name": "A"}, None)
+
+    def ts_b():
+        return ("B data", None)
+
+    # QMT 成功 → A 标签记 qmt
+    tushare_client._try_with_fallback(lambda: (None, "fail"), label="A", qmt_fn=qmt_a)
+    assert tushare_client._data_source_map["A"] == "qmt"
+
+    # Tushare 成功（无 QMT） → B 标签记 tushare
+    import unittest.mock as um
+    with um.patch.object(tushare_client, "_get_pro", return_value=object()):
+        tushare_client._try_with_fallback(ts_b, label="B")
+    assert tushare_client._data_source_map["B"] == "tushare"
+    # A 标签保留原值不被覆盖
+    assert tushare_client._data_source_map["A"] == "qmt"
+
+
+def test_get_data_source_map_returns_copy():
+    """暴露 getter，返回 dict 拷贝。"""
+    from data import tushare_client
+    tushare_client._data_source_map = {"K线": "qmt", "基本信息": "tushare"}
+    m = tushare_client.get_data_source_map()
+    assert m == {"K线": "qmt", "基本信息": "tushare"}
+    m["foo"] = "bar"
+    # 返回的是拷贝，修改不影响原 dict
+    assert "foo" not in tushare_client._data_source_map
+
+
+def test_get_basic_info_uses_qmt(monkeypatch):
+    """get_basic_info 优先走 QMT。"""
+    from data import tushare_client
+    import data.qmt_client as qc
+
+    fake_detail = {
+        "InstrumentName": "平安银行", "ExchangeID": "SZ",
+        "OpenDate": "19910403", "PreClose": 12.0, "UpStopPrice": 13.2,
+        "FloatVolume": 1.9e10, "TotalVolume": 1.94e10,
+    }
+    monkeypatch.setattr(qc, "is_alive", lambda: True)
+    monkeypatch.setattr(qc, "get_instrument_info", lambda sym: fake_detail)
+
+    tushare_client._data_source_map = {}
+    info, err = tushare_client.get_basic_info("000001.SZ")
+    assert err is None
+    assert info.get("name") == "平安银行"
+    assert tushare_client._data_source_map.get("基本信息") == "qmt"
